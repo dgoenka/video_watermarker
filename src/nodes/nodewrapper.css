@@ -1,0 +1,128 @@
+.node-wrapper {
+  position: absolute;
+  box-sizing: border-box;
+  cursor: move;
+}
+
+.node-wrapper.selected {
+  border: 1px solid #1976d2;
+}
+
+.resizer {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: #fff;
+  border: 1px solid #1976d2;
+  border-radius: 2px;
+}
+
+.resizer.top-left {
+  top: -5px;
+  left: -5px;
+  cursor: nwse-resize;
+}
+
+.resizer.top-right {
+  top: -5px;
+  right: -5px;
+  cursor: nesw-resize;
+}
+
+.resizer.bottom-left {
+  bottom: -5px;
+  left: -5px;
+  cursor: nesw-resize;
+}
+
+.canvas-container {
+  flex-grow: 1;
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: #282c34;
+  overflow: hidden;
+}
+
+/* ... existing code ... */
+
+.node-wrapper {
+  position: absolute;
+  box-sizing: border-box;
+  cursor: move;
+}
+
+.node-wrapper.selected {
+  border: 1px solid #1976d2;
+}
+
+.resizer {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: #fff;
+  border: 1px solid #1976d2;
+  border-radius: 2px;
+}
+
+.resizer.top-left {
+  top: -5px;
+  left: -5px;
+  cursor: nwse-resize;
+}
+
+.resizer.top-right {
+  top: -5px;
+  right: -5px;
+  cursor: nesw-resize;
+}
+
+.resizer.bottom-left {
+  bottom: -5px;
+  left: -5px;
+  cursor: nesw-resize;
+}
+
+.resizer.bottom-right {
+  bottom: -5px;
+  right: -5px;
+  cursor: nwse-resize;
+}
+
+.background-video {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+/* Make the drawing surface cover the same area as the video */
+.custom-canvas-wrapper {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+}
+
+/* ===========================
+   FORCE: line has NO bbox handles
+   Put this at the VERY END of the file
+   =========================== */
+
+/* No selection rectangle */
+.node-wrapper--line.selected {
+  border: none !important;
+  outline: none !important;
+}
+
+/* Hide our custom 4-corner resizers if they ever render */
+.node-wrapper--line .resizer {
+  display: none !important;
+}
+
+/* Hide any leftover ReactFlow NodeResizer controls (if any are still injected) */
+.node-wrapper--line .react-flow__resize-control,
+.node-wrapper--line .react-flow__resize-control.handle,
+.node-wrapper--line .react-flow__resize-control.line {
+  display: none !important;
+}

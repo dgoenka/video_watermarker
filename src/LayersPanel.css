@@ -1,0 +1,55 @@
+.layers-panel {
+  display: flex;
+  flex-direction: column;
+  margin-top: 20px;
+}
+
+.layers-header {
+  padding: 10px;
+  font-weight: bold;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.layers-list {
+  overflow-y: auto;
+}
+
+.layer-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px;
+  cursor: pointer;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.layer-item:hover {
+  background-color: #f5f5f5;
+}
+
+.layer-item.selected {
+  background-color: #e3f2fd;
+}
+
+.layer-name {
+  font-size: 14px;
+}
+
+.layer-controls {
+  display: flex;
+  gap: 5px;
+}
+
+.layer-btn {
+  background: none;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  cursor: pointer;
+  width: 24px;
+  height: 24px;
+}
+
+.layer-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

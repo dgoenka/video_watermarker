@@ -1,0 +1,40 @@
+.node-toolbar {
+  position: absolute;
+  top: -40px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px;
+  background-color: rgba(255, 255, 255, 0.95);
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+  cursor: move;
+  white-space: nowrap;
+}
+
+.node-body {
+  cursor: pointer;
+}
+
+.node-controls {
+  display: flex;
+  gap: 5px;
+}
+
+.dismiss-button {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 16px;
+  color: #aaa;
+  transition: color 0.2s;
+}
+
+.dismiss-button:hover {
+  color: #333;
+}

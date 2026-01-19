@@ -1,0 +1,72 @@
+.video-controls-container {
+  width: 100%;
+  padding: 10px 20px;
+  background-color: #f0f2f5;
+  border-top: 1px solid #dcdcdc;
+  box-sizing: border-box;
+}
+
+.progress-bar-container {
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.progress-bar {
+  width: 100%;
+  cursor: pointer;
+}
+
+.controls-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.time-display {
+  font-size: 14px;
+  color: #333;
+  min-width: 120px;
+  font-weight: bold;
+}
+
+.main-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.main-controls button {
+  background-color: transparent;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 0 12px;
+  height: 40px;
+  font-size: 16px;
+  font-weight: bold;
+  color: #000;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.main-controls button:hover {
+  background-color: #e9e9e9;
+}
+
+.play-pause-btn {
+  font-size: 20px;
+  background-color: #1976d2 !important;
+  color: white !important;
+  border: none !important;
+  width: 40px;
+}
+
+.play-pause-btn:hover {
+  background-color: #1565c0 !important;
+}
+
+.placeholder-div {
+  min-width: 120px;
+}
