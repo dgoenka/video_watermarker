@@ -27,6 +27,7 @@ const AppContent = () => {
         event.target.closest('.node-wrapper') ||
         event.target.closest('.line-endpoint-handle') ||
         event.target.closest('.rotation-handle') ||
+        event.target.closest('.resizer') ||
         event.target.closest('.global-toolbar') ||
         event.target.closest('.pipeline-toolbar') ||
         event.target.closest('.layers-panel');

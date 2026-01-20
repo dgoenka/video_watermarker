@@ -1,6 +1,7 @@
 // NodeWrapper.js
 import React, { useState, useEffect, useRef } from 'react';
 import { useStore } from '../store';
+import { RotationHandle } from './RotationHandle';
 import './nodewrapper.css';
 
 const Resizer = ({ onResizeStart }) => (
@@ -13,9 +14,11 @@ const Resizer = ({ onResizeStart }) => (
 );
 
 export const NodeWrapper = ({ id, children, position, width, height, selected, type }) => {
-  const { onNodesChange, selectNode } = useStore(state => ({
+  const { onNodesChange, selectNode, updateNodeField, nodes } = useStore(state => ({
     onNodesChange: state.onNodesChange,
     selectNode: state.selectNode,
+    updateNodeField: state.updateNodeField,
+    nodes: state.nodes,
   }));
 
   const [isDragging, setIsDragging] = useState(false);
@@ -23,9 +26,11 @@ export const NodeWrapper = ({ id, children, position, width, height, selected, t
   const dragOffset = useRef({ x: 0, y: 0 });
   const resizeStart = useRef({ x: 0, y: 0, width: 0, height: 0, position: { x: 0, y: 0 } });
 
+  const node = nodes.find(n => n.id === id);
+  const rotation = node?.data?.rotation || 0;
+
   const onMouseDown = (e) => {
-    // Prevent starting drag if a resize handle was clicked
-    if (e.target.classList.contains('resizer')) return;
+    if (e.target.classList.contains('resizer') || e.target.closest('.rotation-handle')) return;
     
     e.stopPropagation();
     setIsDragging(true);
@@ -59,20 +64,33 @@ export const NodeWrapper = ({ id, children, position, width, height, selected, t
       } else if (isResizing) {
         const dx = e.clientX - resizeStart.current.x;
         const dy = e.clientY - resizeStart.current.y;
+        
+        const rad = (rotation * Math.PI) / 180;
+        const cos = Math.cos(-rad);
+        const sin = Math.sin(-rad);
+        const rotatedDx = dx * cos - dy * sin;
+        const rotatedDy = dx * sin + dy * cos;
+        
         let newWidth = resizeStart.current.width;
         let newHeight = resizeStart.current.height;
         let newX = resizeStart.current.position.x;
         let newY = resizeStart.current.position.y;
 
-        if (isResizing.includes('right')) newWidth += dx;
+        if (isResizing.includes('right')) newWidth += rotatedDx;
         if (isResizing.includes('left')) {
-          newWidth -= dx;
-          newX += dx;
+          newWidth -= rotatedDx;
+          const deltaX = -rotatedDx * cos;
+          const deltaY = -rotatedDx * sin;
+          newX += deltaX;
+          newY += deltaY;
         }
-        if (isResizing.includes('bottom')) newHeight += dy;
+        if (isResizing.includes('bottom')) newHeight += rotatedDy;
         if (isResizing.includes('top')) {
-          newHeight -= dy;
-          newY += dy;
+          newHeight -= rotatedDy;
+          const deltaX = rotatedDy * sin;
+          const deltaY = -rotatedDy * cos;
+          newX += deltaX;
+          newY += deltaY;
         }
 
         if (newWidth > 10 && newHeight > 10) {
@@ -97,7 +115,7 @@ export const NodeWrapper = ({ id, children, position, width, height, selected, t
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
     };
-  }, [isDragging, isResizing, onNodesChange, id]);
+  }, [isDragging, isResizing, onNodesChange, id, rotation]);
 
   return (
   <div
@@ -107,11 +125,18 @@ export const NodeWrapper = ({ id, children, position, width, height, selected, t
       top: position.y,
       width,
       height,
+      transform: `rotate(${rotation}deg)`,
+      transformOrigin: 'center',
     }}
     onMouseDown={onMouseDown}
   >
     {children}
-    {selected && type !== 'line' && <Resizer onResizeStart={onResizeStart} />}
+    {selected && type !== 'line' && (
+      <>
+        <Resizer onResizeStart={onResizeStart} />
+        <RotationHandle id={id} rotation={rotation} />
+      </>
+    )}
   </div>
 );
 };

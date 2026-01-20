@@ -11,22 +11,31 @@ export const RotationHandle = ({ id, rotation = 0 }) => {
     const handleMouseMove = (e) => {
       if (!isRotating) return;
 
-      // We are not using ReactFlow anymore:
       const nodeElement = handleRef.current?.closest('.node-wrapper');
       if (!nodeElement) return;
 
-      const rect = nodeElement.getBoundingClientRect();
-      const centerX = rect.left + rect.width / 2;
-      const centerY = rect.top + rect.height / 2;
+      const canvas = document.querySelector('.custom-canvas-wrapper');
+      const canvasBounds = canvas?.getBoundingClientRect();
+      const nodeBounds = nodeElement.getBoundingClientRect();
+      
+      if (!canvasBounds || !nodeBounds) return;
 
-      const dx = e.clientX - centerX;
-      const dy = e.clientY - centerY;
+      // Calculate center relative to canvas
+      const centerX = nodeBounds.left - canvasBounds.left + nodeBounds.width / 2;
+      const centerY = nodeBounds.top - canvasBounds.top + nodeBounds.height / 2;
+      
+      // Mouse position relative to canvas
+      const mouseX = e.clientX - canvasBounds.left;
+      const mouseY = e.clientY - canvasBounds.top;
+
+      const dx = mouseX - centerX;
+      const dy = mouseY - centerY;
 
       let angle = Math.atan2(dy, dx) * (180 / Math.PI);
-      angle += 90;
+      angle += 90; // Adjust so 0 degrees is pointing up
 
       if (e.shiftKey) {
-        angle = Math.round(angle / 45) * 45;
+        angle = Math.round(angle / 15) * 15; // Snap to 15-degree increments
       }
 
       updateNodeField(id, 'rotation', angle);
@@ -52,33 +61,9 @@ export const RotationHandle = ({ id, rotation = 0 }) => {
       ref={handleRef}
       className="rotation-handle"
       onMouseDown={(e) => {
-        e.stopPropagation(); // Prevent node drag
+        e.stopPropagation();
         setIsRotating(true);
       }}
-      style={{
-        position: 'absolute',
-        top: -25, // Position above the node
-        left: '50%',
-        transform: 'translateX(-50%)',
-        width: 10,
-        height: 10,
-        background: '#fff',
-        border: '1px solid #1976d2',
-        borderRadius: '50%',
-        cursor: 'grab',
-        zIndex: 1002,
-      }}
-    >
-        {/* Connecting line */}
-        <div style={{
-            position: 'absolute',
-            top: 10,
-            left: '50%',
-            width: 1,
-            height: 15,
-            background: '#1976d2',
-            transform: 'translateX(-50%)',
-        }} />
-    </div>
+    />
   );
 };
