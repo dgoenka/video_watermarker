@@ -1,7 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { StoreProvider, useStore } from './store';
 import { AlertProvider } from './alertContext';
-import { ReactFlowProvider } from 'reactflow';
 
 import PipelineUI from './ui';
 import { SubmitButton } from './submit';
@@ -9,12 +8,17 @@ import { api } from './api';
 import { GlobalToolbar } from './GlobalToolbar';
 
 const AppContent = () => {
+  const { unselectAll, nodes, removeNode } = useStore((state) => ({
+    unselectAll: state.unselectAll,
+    nodes: state.nodes,
+    removeNode: state.removeNode,
+  }));
+
   const [videoFile, setVideoFile] = useState(null);
   const [videoDimensions, setVideoDimensions] = useState(null);
   const [isVideoLoaded, setIsVideoLoaded] = useState(false);
   const hiddenVideoRef = useRef(null);
   const setStoreVideoDimensions = useStore(state => state.setVideoDimensions);
-  const unselectAll = useStore((state) => state.unselectAll);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -30,9 +34,25 @@ const AppContent = () => {
       if (!isSafeClick) unselectAll();
     };
 
+    const handleKeyDown = (event) => {
+      const isTyping = event.target.isContentEditable || event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA';
+      if (isTyping) return;
+
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        const selectedNodes = nodes.filter(n => n.selected);
+        if (selectedNodes.length > 0) {
+          selectedNodes.forEach(node => removeNode(node.id));
+        }
+      }
+    };
+
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [unselectAll]);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [unselectAll, nodes, removeNode]);
 
   const handleFileChange = (event) => {
     const file = event.target.files[0];
@@ -121,11 +141,9 @@ const AppContent = () => {
 function App() {
   return (
     <StoreProvider>
-      <ReactFlowProvider>
-        <AlertProvider>
-          <AppContent />
-        </AlertProvider>
-      </ReactFlowProvider>
+      <AlertProvider>
+        <AppContent />
+      </AlertProvider>
     </StoreProvider>
   );
 }
