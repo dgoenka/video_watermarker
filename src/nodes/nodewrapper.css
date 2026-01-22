@@ -129,8 +129,11 @@
 /* Make the drawing surface cover the same area as the video */
 .custom-canvas-wrapper {
   position: absolute;
-  inset: 0;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   z-index: 2;
+  pointer-events: auto;
 }
 
 /* ===========================

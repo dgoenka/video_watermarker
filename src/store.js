@@ -79,7 +79,7 @@ const defaultNodeStyles = {
         borderColor: '#000000',
     },
     line: {
-        borderColor: '#000000',
+        borderColor: '#ffffff',
         borderWidth: 2,
         borderStyle: 'solid',
         arrowStart: 'none',
@@ -97,10 +97,40 @@ const createStore = () => create((set, get) => ({
     nodes: [],
     nodeIDs: {},
     videoDimensions: { width: 0, height: 0 },
+    canvasDimensions: { width: 0, height: 0 },
     currentTime: 0,
     drawingMode: null,
     setDrawingMode: (mode) => set({ drawingMode: mode }),
     setVideoDimensions: (dimensions) => set({ videoDimensions: dimensions }),
+    setCanvasDimensions: (dimensions) => {
+        const prevCanvas = get().canvasDimensions;
+        if (prevCanvas.width > 0 && prevCanvas.height > 0 && 
+            (prevCanvas.width !== dimensions.width || prevCanvas.height !== dimensions.height)) {
+            // Scale existing nodes
+            const scaleX = dimensions.width / prevCanvas.width;
+            const scaleY = dimensions.height / prevCanvas.height;
+            const nodes = get().nodes.map(node => ({
+                ...node,
+                position: { x: node.position.x * scaleX, y: node.position.y * scaleY },
+                width: node.width * scaleX,
+                height: node.height * scaleY,
+                data: {
+                    ...node.data,
+                    startPoint: node.data.startPoint ? {
+                        x: node.data.startPoint.x * scaleX,
+                        y: node.data.startPoint.y * scaleY
+                    } : node.data.startPoint,
+                    endPoint: node.data.endPoint ? {
+                        x: node.data.endPoint.x * scaleX,
+                        y: node.data.endPoint.y * scaleY
+                    } : node.data.endPoint
+                }
+            }));
+            set({ nodes, canvasDimensions: dimensions });
+        } else {
+            set({ canvasDimensions: dimensions });
+        }
+    },
     setCurrentTime: (time) => set({ currentTime: time }),
     getNodeID: (type) => {
         const newIDs = {...(get().nodeIDs || {})};

@@ -14,11 +14,12 @@ const Resizer = ({ onResizeStart }) => (
 );
 
 export const NodeWrapper = ({ id, children, position, width, height, selected, type }) => {
-  const { onNodesChange, selectNode, updateNodeField, nodes } = useStore(state => ({
+  const { onNodesChange, selectNode, updateNodeField, nodes, canvasDimensions } = useStore(state => ({
     onNodesChange: state.onNodesChange,
     selectNode: state.selectNode,
     updateNodeField: state.updateNodeField,
     nodes: state.nodes,
+    canvasDimensions: state.canvasDimensions,
   }));
 
   const [isDragging, setIsDragging] = useState(false);
@@ -28,6 +29,14 @@ export const NodeWrapper = ({ id, children, position, width, height, selected, t
 
   const node = nodes.find(n => n.id === id);
   const rotation = node?.data?.rotation || 0;
+
+  const constrainToCanvas = (pos, w, h) => {
+    if (canvasDimensions.width === 0 || canvasDimensions.height === 0) return pos;
+    return {
+      x: Math.max(0, Math.min(pos.x, canvasDimensions.width - w)),
+      y: Math.max(0, Math.min(pos.y, canvasDimensions.height - h))
+    };
+  };
 
   const onMouseDown = (e) => {
     if (e.target.classList.contains('resizer') || e.target.closest('.rotation-handle')) return;
@@ -56,10 +65,10 @@ export const NodeWrapper = ({ id, children, position, width, height, selected, t
   useEffect(() => {
     const handleMouseMove = (e) => {
       if (isDragging) {
-        const newPos = {
+        const newPos = constrainToCanvas({
           x: e.clientX - dragOffset.current.x,
           y: e.clientY - dragOffset.current.y,
-        };
+        }, width, height);
         onNodesChange([{ id, type: 'position', position: newPos }]);
       } else if (isResizing) {
         const dx = e.clientX - resizeStart.current.x;
@@ -93,9 +102,14 @@ export const NodeWrapper = ({ id, children, position, width, height, selected, t
           newY += deltaY;
         }
 
+        // Constrain size and position to canvas
+        newWidth = Math.max(10, Math.min(newWidth, canvasDimensions.width - newX));
+        newHeight = Math.max(10, Math.min(newHeight, canvasDimensions.height - newY));
+        const constrainedPos = constrainToCanvas({ x: newX, y: newY }, newWidth, newHeight);
+
         if (newWidth > 10 && newHeight > 10) {
           onNodesChange([
-            { id, type: 'position', position: { x: newX, y: newY } },
+            { id, type: 'position', position: constrainedPos },
             { id, type: 'dimensions', dimensions: { width: newWidth, height: newHeight } }
           ]);
         }

@@ -8,10 +8,11 @@ import { api } from './api';
 import { GlobalToolbar } from './GlobalToolbar';
 
 const AppContent = () => {
-  const { unselectAll, nodes, removeNode } = useStore((state) => ({
+  const { unselectAll, nodes, removeNode, onNodesChange } = useStore((state) => ({
     unselectAll: state.unselectAll,
     nodes: state.nodes,
     removeNode: state.removeNode,
+    onNodesChange: state.onNodesChange,
   }));
 
   const [videoFile, setVideoFile] = useState(null);
@@ -39,8 +40,22 @@ const AppContent = () => {
       const isTyping = event.target.isContentEditable || event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA';
       if (isTyping) return;
 
+      const selectedNodes = nodes.filter(n => n.selected);
+      
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key) && selectedNodes.length > 0) {
+        event.preventDefault();
+        const step = event.shiftKey ? 1 : 10;
+        const dx = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0;
+        const dy = event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0;
+        
+        selectedNodes.forEach(node => {
+          const newPos = { x: node.position.x + dx, y: node.position.y + dy };
+          onNodesChange([{ id: node.id, type: 'position', position: newPos }]);
+        });
+        return;
+      }
+
       if (event.key === 'Delete' || event.key === 'Backspace') {
-        const selectedNodes = nodes.filter(n => n.selected);
         if (selectedNodes.length > 0) {
           selectedNodes.forEach(node => removeNode(node.id));
         }
@@ -53,7 +68,7 @@ const AppContent = () => {
       document.removeEventListener('mousedown', handleClickOutside);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [unselectAll, nodes, removeNode]);
+  }, [unselectAll, nodes, removeNode, onNodesChange]);
 
   const handleFileChange = (event) => {
     const file = event.target.files[0];

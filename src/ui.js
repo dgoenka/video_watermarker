@@ -1,4 +1,4 @@
-import { useRef, useCallback, useState } from 'react';
+import { useRef, useCallback, useState, useEffect } from 'react';
 import { useStore } from './store';
 import { shallow } from 'zustand/shallow';
 
@@ -36,6 +36,7 @@ const selector = (state) => ({
 export default function PipelineUI({ videoFile, videoDimensions }) {
   const canvasWrapperRef = useRef(null);
   const videoRef = useRef(null);
+  const setCanvasDimensions = useStore(state => state.setCanvasDimensions);
 
   const {
     nodes,
@@ -52,10 +53,73 @@ export default function PipelineUI({ videoFile, videoDimensions }) {
   const [drawingStartPos, setDrawingStartPos] = useState(null);
   const [drawingNodeId, setDrawingNodeId] = useState(null);
 
+  useEffect(() => {
+    const updateCanvasDimensions = () => {
+      if (videoRef.current) {
+        const rect = videoRef.current.getBoundingClientRect();
+        setCanvasDimensions({ width: rect.width, height: rect.height });
+      }
+    };
+
+    if (videoFile) {
+      const video = videoRef.current;
+      if (video) {
+        video.addEventListener('loadedmetadata', updateCanvasDimensions);
+      }
+      updateCanvasDimensions();
+    }
+    
+    const resizeObserver = new ResizeObserver(updateCanvasDimensions);
+    if (videoRef.current) {
+      resizeObserver.observe(videoRef.current);
+    }
+    
+    window.addEventListener('resize', updateCanvasDimensions);
+    return () => {
+      window.removeEventListener('resize', updateCanvasDimensions);
+      resizeObserver.disconnect();
+      if (videoRef.current) {
+        videoRef.current.removeEventListener('loadedmetadata', updateCanvasDimensions);
+      }
+    };
+  }, [videoFile, setCanvasDimensions]);
+
+  const getIntelligentLineColor = () => {
+    if (!videoRef.current) return '#808080';
+    
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = 100;
+    canvas.height = 100;
+    
+    try {
+      ctx.drawImage(videoRef.current, 0, 0, 100, 100);
+      const imageData = ctx.getImageData(0, 0, 100, 100);
+      const data = imageData.data;
+      
+      let totalBrightness = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        const brightness = (data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114);
+        totalBrightness += brightness;
+      }
+      
+      const avgBrightness = totalBrightness / (data.length / 4);
+      const intensity = Math.max(0, Math.min(255, Math.round(255 - avgBrightness)));
+      return `rgb(${intensity}, ${intensity}, ${intensity})`;
+    } catch {
+      return '#808080';
+    }
+  };
+
   const project = ({ x, y }) => {
     if (!canvasWrapperRef.current) return { x, y };
     const bounds = canvasWrapperRef.current.getBoundingClientRect();
-    return { x: x - bounds.left, y: y - bounds.top };
+    const relativeX = x - bounds.left;
+    const relativeY = y - bounds.top;
+    return { 
+      x: Math.max(0, Math.min(relativeX, bounds.width)), 
+      y: Math.max(0, Math.min(relativeY, bounds.height)) 
+    };
   };
 
   const onMouseDown = useCallback((event) => {
@@ -81,7 +145,10 @@ export default function PipelineUI({ videoFile, videoDimensions }) {
         id: nodeID,
         type: drawingMode,
         position,
-        data: { nodeType: drawingMode },
+        data: { 
+          nodeType: drawingMode,
+          ...(drawingMode === 'line' && { styles: { borderColor: getIntelligentLineColor() } })
+        },
         width: 0,
         height: 0,
         selected: true,
@@ -160,11 +227,17 @@ export default function PipelineUI({ videoFile, videoDimensions }) {
       if (drawingMode === 'line') {
         const start = drawingStartPos;
         const end = { x: start.x + defaultSize, y: start.y };
+        const intelligentColor = getIntelligentLineColor();
         addNode({
           id: nodeID,
           type: 'line',
           position: { x: start.x, y: start.y - 5 },
-          data: { nodeType: 'line', startPoint: start, endPoint: end },
+          data: { 
+            nodeType: 'line', 
+            startPoint: start, 
+            endPoint: end,
+            styles: { borderColor: intelligentColor }
+          },
           width: defaultSize,
           height: 10,
           selected: true,
@@ -189,6 +262,7 @@ export default function PipelineUI({ videoFile, videoDimensions }) {
           const end = { x: start.x + defaultSize, y: start.y };
           const minX = Math.min(start.x, end.x);
           const minY = Math.min(start.y, end.y);
+          const intelligentColor = getIntelligentLineColor();
 
           onNodesChange([
             { id: drawingNodeId, type: 'position', position: { x: minX, y: minY - 5 } },
@@ -196,6 +270,7 @@ export default function PipelineUI({ videoFile, videoDimensions }) {
           ]);
           updateNodeField(drawingNodeId, 'startPoint', start);
           updateNodeField(drawingNodeId, 'endPoint', end);
+          updateNodeField(drawingNodeId, 'styles', { borderColor: intelligentColor });
         } else {
           onNodesChange([
             { id: drawingNodeId, type: 'dimensions', dimensions: { width: defaultSize, height: defaultSize } },
@@ -238,7 +313,11 @@ export default function PipelineUI({ videoFile, videoDimensions }) {
             onMouseDown={onMouseDown}
             onMouseMove={onMouseMove}
             onMouseUp={onMouseUp}
-            style={{ cursor: drawingMode ? 'crosshair' : 'default' }}
+            style={{ 
+              cursor: drawingMode ? 'crosshair' : 'default',
+              width: videoDimensions?.width || '100%',
+              height: videoDimensions?.height || '100%'
+            }}
           >
             {nodes.map((node) => {
               const NodeComponent = nodeTypes[node.type];
