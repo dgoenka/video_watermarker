@@ -102,9 +102,6 @@ export const NodeWrapper = ({ id, children, position, width, height, selected, t
           newY += deltaY;
         }
 
-        // Constrain size and position to canvas
-        newWidth = Math.max(10, Math.min(newWidth, canvasDimensions.width - newX));
-        newHeight = Math.max(10, Math.min(newHeight, canvasDimensions.height - newY));
         const constrainedPos = constrainToCanvas({ x: newX, y: newY }, newWidth, newHeight);
 
         if (newWidth > 10 && newHeight > 10) {

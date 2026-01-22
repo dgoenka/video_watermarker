@@ -9,7 +9,7 @@ const LineNodeComponent = ({ id, data = {}, styles = {}, isVisible, selected }) 
     onNodesChange: state.onNodesChange,
   }));
 
-  const [dragEndpoint, setDragEndpoint] = useState(null); // 'start' | 'end' | null
+  const [dragEndpoint, setDragEndpoint] = useState(null);
 
   const startPoint = data.startPoint || { x: 0, y: 0 };
   const endPoint = data.endPoint || { x: 100, y: 0 };
