@@ -119,6 +119,10 @@ const createStore = () => create((set, get) => ({
                     height: node.height * scaleY,
                     data: {
                         ...node.data,
+                        styles: node.data.styles && node.data.styles.fontSize ? {
+                            ...node.data.styles,
+                            fontSize: Math.round(node.data.styles.fontSize * Math.min(scaleX, scaleY))
+                        } : node.data.styles,
                         startPoint: node.data.startPoint ? {
                             x: node.data.startPoint.x * scaleX,
                             y: node.data.startPoint.y * scaleY
