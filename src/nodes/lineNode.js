@@ -167,9 +167,4 @@ const LineNodeComponent = ({ id, data = {}, styles = {}, isVisible, selected }) 
   );
 };
 
-const onMouseDown = (e) => {
-  if (e.target.closest('.line-endpoint-handle')) return;
-  // ... existing code ...
-};
-
 export const LineNode = withNodeFeatures(LineNodeComponent);

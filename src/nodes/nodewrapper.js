@@ -14,7 +14,7 @@ const Resizer = ({ onResizeStart }) => (
 );
 
 export const NodeWrapper = ({ id, children, position, width, height, selected, type }) => {
-  const { onNodesChange, selectNode, updateNodeField, nodes, canvasDimensions } = useStore(state => ({
+  const { onNodesChange, selectNode, nodes, canvasDimensions } = useStore(state => ({
     onNodesChange: state.onNodesChange,
     selectNode: state.selectNode,
     updateNodeField: state.updateNodeField,
