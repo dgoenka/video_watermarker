@@ -104,44 +104,32 @@ const createStore = () => create((set, get) => ({
     setVideoDimensions: (dimensions) => set({ videoDimensions: dimensions }),
     setCanvasDimensions: (dimensions) => {
         const prevCanvas = get().canvasDimensions;
-        console.log('setCanvasDimensions:', { prev: prevCanvas, new: dimensions });
         if (prevCanvas.width > 0 && prevCanvas.height > 0 && 
             (prevCanvas.width !== dimensions.width || prevCanvas.height !== dimensions.height)) {
             // Scale existing nodes
             const scaleX = dimensions.width / prevCanvas.width;
             const scaleY = dimensions.height / prevCanvas.height;
-            console.log('Scaling nodes:', { scaleX, scaleY, nodeCount: get().nodes.length });
-            const nodes = get().nodes.map(node => {
-                const scaledNode = {
-                    ...node,
-                    position: { x: node.position.x * scaleX, y: node.position.y * scaleY },
-                    width: node.width * scaleX,
-                    height: node.height * scaleY,
-                    data: {
-                        ...node.data,
-                        styles: node.data.styles && node.data.styles.fontSize ? {
-                            ...node.data.styles,
-                            fontSize: Math.round(node.data.styles.fontSize * Math.min(scaleX, scaleY))
-                        } : node.data.styles,
-                        startPoint: node.data.startPoint ? {
-                            x: node.data.startPoint.x * scaleX,
-                            y: node.data.startPoint.y * scaleY
-                        } : node.data.startPoint,
-                        endPoint: node.data.endPoint ? {
-                            x: node.data.endPoint.x * scaleX,
-                            y: node.data.endPoint.y * scaleY
-                        } : node.data.endPoint
-                    }
-                };
-                console.log('Node scaled:', { 
-                    id: node.id,
-                    oldPos: node.position, 
-                    newPos: scaledNode.position,
-                    oldSize: { w: node.width, h: node.height },
-                    newSize: { w: scaledNode.width, h: scaledNode.height }
-                });
-                return scaledNode;
-            });
+            const nodes = get().nodes.map(node => ({
+                ...node,
+                position: { x: node.position.x * scaleX, y: node.position.y * scaleY },
+                width: node.width * scaleX,
+                height: node.height * scaleY,
+                data: {
+                    ...node.data,
+                    styles: node.data.styles && node.data.styles.fontSize ? {
+                        ...node.data.styles,
+                        fontSize: Math.round(node.data.styles.fontSize * Math.min(scaleX, scaleY))
+                    } : node.data.styles,
+                    startPoint: node.data.startPoint ? {
+                        x: node.data.startPoint.x * scaleX,
+                        y: node.data.startPoint.y * scaleY
+                    } : node.data.startPoint,
+                    endPoint: node.data.endPoint ? {
+                        x: node.data.endPoint.x * scaleX,
+                        y: node.data.endPoint.y * scaleY
+                    } : node.data.endPoint
+                }
+            }));
             set({ nodes, canvasDimensions: dimensions });
         } else {
             set({ canvasDimensions: dimensions });

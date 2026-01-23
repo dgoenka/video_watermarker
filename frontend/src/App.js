@@ -6,6 +6,8 @@ import PipelineUI from './ui';
 import { SubmitButton } from './submit';
 import { api } from './api';
 import { GlobalToolbar } from './GlobalToolbar';
+import { backendApi } from './backendApi';
+import { ProcessingDialog } from './ProcessingDialog';
 
 const AppContent = () => {
   const { unselectAll, nodes, removeNode, onNodesChange } = useStore((state) => ({
@@ -18,6 +20,8 @@ const AppContent = () => {
   const [videoFile, setVideoFile] = useState(null);
   const [videoDimensions, setVideoDimensions] = useState(null);
   const [isVideoLoaded, setIsVideoLoaded] = useState(false);
+  const [processingJobId, setProcessingJobId] = useState(null);
+  const [originalVideoFile, setOriginalVideoFile] = useState(null);
   const hiddenVideoRef = useRef(null);
   const setStoreVideoDimensions = useStore(state => state.setVideoDimensions);
 
@@ -76,6 +80,7 @@ const AppContent = () => {
       if (videoFile) {
         URL.revokeObjectURL(videoFile);
       }
+      setOriginalVideoFile(file);
       setVideoFile(URL.createObjectURL(file));
       setIsVideoLoaded(false);
     }
@@ -100,24 +105,21 @@ const AppContent = () => {
         return;
     }
 
-    const formData = new FormData(event.target);
-    const urlEncodedData = new URLSearchParams(formData).toString();
-
     try {
-      const response = await api.post('/pipelines/parse', urlEncodedData, {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-      });
-      const { num_nodes, num_edges, is_dag } = response.data;
-      const message = 
-        `Number of Nodes: ${num_nodes}\n` +
-        `Number of Edges: ${num_edges}\n` +
-        `Is DAG: ${is_dag}`;
-      alert(message);
+      // Get video duration
+      const videoDuration = hiddenVideoRef.current?.duration || 0;
+      
+      // Upload to backend
+      const response = await backendApi.uploadVideo(
+        originalVideoFile,
+        nodes,
+        { ...videoDimensions, duration: videoDuration }
+      );
+      
+      setProcessingJobId(response.job_id);
     } catch (error) {
-        console.error('Error submitting pipeline:', error);
-        alert('Error: Failed to submit pipeline. Check the console for details.');
+        console.error('Error submitting video:', error);
+        alert('Error: Failed to submit video. Check the console for details.');
     }
   };
 
@@ -150,6 +152,12 @@ const AppContent = () => {
     <form onSubmit={handleSubmit} className="app-layout">
       <GlobalToolbar submitButton={<SubmitButton />} />
       <PipelineUI videoFile={videoFile} videoDimensions={videoDimensions} />
+      {processingJobId && (
+        <ProcessingDialog
+          jobId={processingJobId}
+          onClose={() => setProcessingJobId(null)}
+        />
+      )}
     </form>
   );
 };
