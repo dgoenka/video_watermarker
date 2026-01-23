@@ -102,7 +102,11 @@ fastify.get('/api/download/:jobId', async (request, reply) => {
   
   try {
     await fs.access(job.output_path);
-    return reply.sendFile(path.basename(job.output_path), path.dirname(job.output_path));
+    const stream = await fs.readFile(job.output_path);
+    return reply
+      .header('Content-Disposition', `attachment; filename="${path.basename(job.output_path)}"`)
+      .type('video/mp4')
+      .send(stream);
   } catch {
     return reply.code(404).send({ error: 'Output file not found' });
   }

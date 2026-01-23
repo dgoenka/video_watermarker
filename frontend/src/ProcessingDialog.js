@@ -1,15 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { backendApi, StatusResponse } from './backendApi';
+import { backendApi } from './backendApi';
 import './ProcessingDialog.css';
 
-interface ProcessingDialogProps {
-  jobId: string;
-  onClose: () => void;
-}
-
-export const ProcessingDialog: React.FC<ProcessingDialogProps> = ({ jobId, onClose }) => {
-  const [status, setStatus] = useState<StatusResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+export const ProcessingDialog = ({ jobId, onClose }) => {
+  const [status, setStatus] = useState(null);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     const pollStatus = async () => {
@@ -25,7 +20,7 @@ export const ProcessingDialog: React.FC<ProcessingDialogProps> = ({ jobId, onClo
         } else if (statusData.status === 'failed') {
           setError(statusData.error_message || 'Processing failed');
         }
-      } catch (err: any) {
+      } catch (err) {
         setError(err.message);
       }
     };
@@ -40,8 +35,8 @@ export const ProcessingDialog: React.FC<ProcessingDialogProps> = ({ jobId, onClo
     try {
       setError(null);
       await backendApi.retryJob(jobId);
-      setStatus({ ...status!, status: 'pending' });
-    } catch (err: any) {
+      setStatus({ ...status, status: 'pending' });
+    } catch (err) {
       setError(err.message);
     }
   };
