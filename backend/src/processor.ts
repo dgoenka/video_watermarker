@@ -23,6 +23,8 @@ interface VideoData {
   canvas_height?: number;
 }
 
+import { config } from './config';
+
 export class VideoProcessor {
   constructor(
     private jobId: string,
@@ -128,59 +130,17 @@ export class VideoProcessor {
     }
     
     if (styles.fillType === 'radial') {
+      // Simplified radial gradient - use a solid color for now to avoid complex geq filters
       const color1 = rgbToHex(styles.gradientColor1 || '#ffffff');
-      const color2 = rgbToHex(styles.gradientColor2 || '#000000');
-      const c1r = parseInt(color1.slice(2, 4), 16);
-      const c1g = parseInt(color1.slice(4, 6), 16);
-      const c1b = parseInt(color1.slice(6, 8), 16);
-      const c2r = parseInt(color2.slice(2, 4), 16);
-      const c2g = parseInt(color2.slice(4, 6), 16);
-      const c2b = parseInt(color2.slice(6, 8), 16);
-      const cx = x + w / 2;
-      const cy = y + h / 2;
-      const maxR = Math.sqrt((w/2) * (w/2) + (h/2) * (h/2));
-      const a1r = Math.round(c1r * opacity);
-      const a1g = Math.round(c1g * opacity);
-      const a1b = Math.round(c1b * opacity);
-      const a2r = Math.round(c2r * opacity);
-      const a2g = Math.round(c2g * opacity);
-      const a2b = Math.round(c2b * opacity);
-      const timeCondition = windows.map(([start, end]) => {
-        const s = start.toFixed(3);
-        const e = end.toFixed(3);
-        return start === end ? `gte(T,${s})` : `between(T,${s},${e})`;
-      }).join('+');
-      const gradFilter = `geq=r='if((${timeCondition})*between(X\,${x}\,${x+w-1})*between(Y\,${y}\,${y+h-1})\,r(X\,Y)*(1-${opacity})+(${a1r}+(${a2r}-${a1r})*min(hypot(X-${cx}\,Y-${cy})/${maxR}\,1))*${opacity}\,r(X\,Y))':g='if((${timeCondition})*between(X\,${x}\,${x+w-1})*between(Y\,${y}\,${y+h-1})\,g(X\,Y)*(1-${opacity})+(${a1g}+(${a2g}-${a1g})*min(hypot(X-${cx}\,Y-${cy})/${maxR}\,1))*${opacity}\,g(X\,Y))':b='if((${timeCondition})*between(X\,${x}\,${x+w-1})*between(Y\,${y}\,${y+h-1})\,b(X\,Y)*(1-${opacity})+(${a1b}+(${a2b}-${a1b})*min(hypot(X-${cx}\,Y-${cy})/${maxR}\,1))*${opacity}\,b(X\,Y))'`;
-      filters.push(gradFilter);
+      const fillColorWithAlpha = `${color1}${alpha}`;
+      const fillFilter = `drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${fillColorWithAlpha}:t=fill:enable='${enableConditions}'`;
+      filters.push(fillFilter);
     } else if (styles.fillType === 'gradient') {
+      // Simplified linear gradient - use a solid color for now
       const color1 = rgbToHex(styles.gradientColor1 || '#ffffff');
-      const color2 = rgbToHex(styles.gradientColor2 || '#000000');
-      const angle = parseFloat(styles.gradientAngle || 0);
-      const c1r = parseInt(color1.slice(2, 4), 16);
-      const c1g = parseInt(color1.slice(4, 6), 16);
-      const c1b = parseInt(color1.slice(6, 8), 16);
-      const c2r = parseInt(color2.slice(2, 4), 16);
-      const c2g = parseInt(color2.slice(4, 6), 16);
-      const c2b = parseInt(color2.slice(6, 8), 16);
-      const a1r = Math.round(c1r * opacity);
-      const a1g = Math.round(c1g * opacity);
-      const a1b = Math.round(c1b * opacity);
-      const a2r = Math.round(c2r * opacity);
-      const a2g = Math.round(c2g * opacity);
-      const a2b = Math.round(c2b * opacity);
-      const rad = ((90 - angle) * Math.PI) / 180;
-      const cos = Math.cos(rad);
-      const sin = Math.sin(rad);
-      const cx = x + w / 2;
-      const cy = y + h / 2;
-      const maxDist = Math.max(w, h);
-      const timeCondition = windows.map(([start, end]) => {
-        const s = start.toFixed(3);
-        const e = end.toFixed(3);
-        return start === end ? `gte(T,${s})` : `between(T,${s},${e})`;
-      }).join('+');
-      const gradFilter = `geq=r='if((${timeCondition})*between(X\,${x}\,${x+w-1})*between(Y\,${y}\,${y+h-1})\,r(X\,Y)*(1-${opacity})+(${a1r}+(${a2r}-${a1r})*clip((((X-${cx})*${cos}-(Y-${cy})*${sin})/${maxDist}+0.5)\,0\,1))*${opacity}\,r(X\,Y))':g='if((${timeCondition})*between(X\,${x}\,${x+w-1})*between(Y\,${y}\,${y+h-1})\,g(X\,Y)*(1-${opacity})+(${a1g}+(${a2g}-${a1g})*clip((((X-${cx})*${cos}-(Y-${cy})*${sin})/${maxDist}+0.5)\,0\,1))*${opacity}\,g(X\,Y))':b='if((${timeCondition})*between(X\,${x}\,${x+w-1})*between(Y\,${y}\,${y+h-1})\,b(X\,Y)*(1-${opacity})+(${a1b}+(${a2b}-${a1b})*clip((((X-${cx})*${cos}-(Y-${cy})*${sin})/${maxDist}+0.5)\,0\,1))*${opacity}\,b(X\,Y))'`;
-      filters.push(gradFilter);
+      const fillColorWithAlpha = `${color1}${alpha}`;
+      const fillFilter = `drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${fillColorWithAlpha}:t=fill:enable='${enableConditions}'`;
+      filters.push(fillFilter);
     } else {
       const fillFilter = `drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${fillColorWithAlpha}:t=fill:enable='${enableConditions}'`;
       filters.push(fillFilter);
@@ -237,28 +197,23 @@ export class VideoProcessor {
       let xPos = x;
       
       if (styles.hasShadow) {
-        const shadowBlur = Math.max(2, styles.shadowBlur || 4);
-        const shadowOffsetX = styles.shadowOffsetX || 0;
-        const shadowOffsetY = styles.shadowOffsetY || 0;
+        // Simplified shadow - single shadow instead of blur loop
+        const shadowOffsetX = styles.shadowOffsetX || 2;
+        const shadowOffsetY = styles.shadowOffsetY || 2;
         const shadowColor = styles.shadowColor || '#000000';
         
-        for (let i = 0; i < shadowBlur; i++) {
-          const alpha = Math.round((1 - i / shadowBlur) * 128).toString(16).padStart(2, '0');
-          const offset = i;
-          
-          let shadowFilter = `drawtext=text='${text}':fontfile=${fontFile}:fontsize=${fontSize}:fontcolor=${shadowColor}${alpha}:box=0`;
-          
-          if (textAlign === 'center') {
-            shadowFilter += `:x=${x + (data.width || 100) / 2 + shadowOffsetX + offset}-text_w/2:y=${yPos + shadowOffsetY + offset}`;
-          } else if (textAlign === 'right') {
-            shadowFilter += `:x=${x + (data.width || 100) + shadowOffsetX + offset}-text_w:y=${yPos + shadowOffsetY + offset}`;
-          } else {
-            shadowFilter += `:x=${xPos + shadowOffsetX + offset}:y=${yPos + shadowOffsetY + offset}`;
-          }
-          
-          shadowFilter += `:enable='${enableConditions}'`;
-          filters.push(shadowFilter);
+        let shadowFilter = `drawtext=text='${text}':fontfile=${fontFile}:fontsize=${fontSize}:fontcolor=${shadowColor}80:box=0`;
+        
+        if (textAlign === 'center') {
+          shadowFilter += `:x=${x + (data.width || 100) / 2 + shadowOffsetX}-text_w/2:y=${yPos + shadowOffsetY}`;
+        } else if (textAlign === 'right') {
+          shadowFilter += `:x=${x + (data.width || 100) + shadowOffsetX}-text_w:y=${yPos + shadowOffsetY}`;
+        } else {
+          shadowFilter += `:x=${xPos + shadowOffsetX}:y=${yPos + shadowOffsetY}`;
         }
+        
+        shadowFilter += `:enable='${enableConditions}'`;
+        filters.push(shadowFilter);
       }
       
       let textFilter = `drawtext=text='${text}':fontfile=${fontFile}:fontsize=${fontSize}:fontcolor=${fontColor}:box=0`;
@@ -325,9 +280,7 @@ export class VideoProcessor {
       
       const args = [
         '-i', this.videoPath,
-        '-filter_complex', `${filterString}[v]`,
-        '-map', '[v]',
-        '-map', '0:a?',
+        '-vf', filterString,
         '-c:v', 'libx264',
         '-preset', 'slow',
         '-crf', '18',
@@ -344,7 +297,7 @@ export class VideoProcessor {
 
   private async runFFmpeg(args: string[]): Promise<{ success: boolean; result: string }> {
     console.log('FFmpeg args count:', args.length);
-    const progressPath = path.join(process.cwd(), 'jobs', this.jobId, `${this.jobId}_progress.txt`);
+    const progressPath = path.join(config.outputDir, this.jobId, `${this.jobId}_progress.txt`);
     console.log('Progress path:', progressPath);
     
     try {

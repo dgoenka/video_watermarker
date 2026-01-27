@@ -1,0 +1,38 @@
+{
+  "Arial": {
+    "regular": "Arial.ttf",
+    "bold": "ArialBold.ttf",
+    "italic": "ArialItalic.ttf",
+    "boldItalic": "ArialBoldItalic.ttf"
+  },
+  "Verdana": {
+    "regular": "Verdana.ttf",
+    "bold": "VerdanaBold.ttf",
+    "italic": "VerdanaItalic.ttf",
+    "boldItalic": "VerdanaBoldItalic.ttf"
+  },
+  "Times New Roman": {
+    "regular": "TimesNewRoman.ttf",
+    "bold": "TimesNewRomanBold.ttf",
+    "italic": "TimesNewRomanItalic.ttf",
+    "boldItalic": "TimesNewRomanBoldItalic.ttf"
+  },
+  "Courier New": {
+    "regular": "CourierNew.ttf",
+    "bold": "CourierNewBold.ttf",
+    "italic": "CourierNewItalic.ttf",
+    "boldItalic": "CourierNewBoldItalic.ttf"
+  },
+  "Georgia": {
+    "regular": "Georgia.ttf",
+    "bold": "GeorgiaBold.ttf",
+    "italic": "GeorgiaItalic.ttf",
+    "boldItalic": "GeorgiaBoldItalic.ttf"
+  },
+  "Trebuchet MS": {
+    "regular": "TrebuchetMS.ttf",
+    "bold": "TrebuchetMSBold.ttf",
+    "italic": "TrebuchetMSItalic.ttf",
+    "boldItalic": "TrebuchetMSBoldItalic.ttf"
+  }
+}
