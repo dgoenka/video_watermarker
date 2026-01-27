@@ -3,6 +3,7 @@ import IORedis from 'ioredis';
 import { config } from './config';
 import { VideoProcessor } from './processor';
 import { getJob, updateJobStatus, updateJobCompleted, JobStatus } from './db';
+import { getVideoData, getVideoPath, getOutputPath, saveErrorLog } from './storage';
 
 const connection = new IORedis(config.redisUrl, { maxRetriesPerRequest: null });
 
@@ -12,7 +13,7 @@ export function startWorker() {
   const worker = new Worker(
     'video-processing',
     async (job) => {
-      const { jobId, videoPath } = job.data;
+      const { jobId } = job.data;
       
       try {
         const jobRecord = await getJob(jobId);
@@ -22,20 +23,33 @@ export function startWorker() {
         
         await updateJobStatus(jobId, JobStatus.PROCESSING);
         
-        const videoData = JSON.parse(jobRecord.video_data);
-        const processor = new VideoProcessor(jobId, videoPath, videoData);
+        console.log('Starting job processing for:', jobId);
+        
+        const videoData = await getVideoData(jobId);
+        console.log('Video data loaded, nodes count:', videoData.nodes?.length);
+        
+        const videoPath = await getVideoPath(jobId);
+        console.log('Video path:', videoPath);
+        
+        const outputPath = await getOutputPath(jobId);
+        console.log('Output path:', outputPath);
+        
+        const processor = new VideoProcessor(jobId, videoPath, outputPath, videoData);
+        console.log('Processor created, starting processing...');
         
         const { success, result } = await processor.process();
         
         if (success) {
-          await updateJobCompleted(jobId, result);
+          await updateJobCompleted(jobId);
         } else {
           await updateJobStatus(jobId, JobStatus.FAILED, result);
+          await saveErrorLog(jobId, result);
         }
         
         return { success, result };
       } catch (error: any) {
         await updateJobStatus(jobId, JobStatus.FAILED, error.message);
+        await saveErrorLog(jobId, error.message);
         throw error;
       }
     },

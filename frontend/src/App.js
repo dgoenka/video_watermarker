@@ -10,17 +10,20 @@ import { backendApi } from './backendApi';
 import { ProcessingDialog } from './ProcessingDialog';
 
 const AppContent = () => {
-  const { unselectAll, nodes, removeNode, onNodesChange } = useStore((state) => ({
+  const { unselectAll, nodes, removeNode, onNodesChange, canvasDimensions } = useStore((state) => ({
     unselectAll: state.unselectAll,
     nodes: state.nodes,
     removeNode: state.removeNode,
     onNodesChange: state.onNodesChange,
+    canvasDimensions: state.canvasDimensions,
   }));
 
   const [videoFile, setVideoFile] = useState(null);
   const [videoDimensions, setVideoDimensions] = useState(null);
   const [isVideoLoaded, setIsVideoLoaded] = useState(false);
   const [processingJobId, setProcessingJobId] = useState(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [isUploading, setIsUploading] = useState(false);
   const [originalVideoFile, setOriginalVideoFile] = useState(null);
   const hiddenVideoRef = useRef(null);
   const setStoreVideoDimensions = useStore(state => state.setVideoDimensions);
@@ -106,20 +109,43 @@ const AppContent = () => {
     }
 
     try {
-      // Get video duration
-      const videoDuration = hiddenVideoRef.current?.duration || 0;
+      setIsUploading(true);
+      setUploadProgress(0);
       
-      // Upload to backend
+      const videoDuration = hiddenVideoRef.current?.duration || 0;
+      const canvas = canvasDimensions || videoDimensions;
+      
+      const processedNodes = nodes.map(node => {
+        if (node.type === 'text') {
+          // Find the text content from the DOM element
+          const textElement = document.querySelector(`[data-node-id="${node.id}"] [contenteditable]`);
+          const textContent = textElement ? textElement.innerText : 'Text';
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              text: textContent
+            }
+          };
+        }
+        return node;
+      });
+      
       const response = await backendApi.uploadVideo(
         originalVideoFile,
-        nodes,
-        { ...videoDimensions, duration: videoDuration }
+        processedNodes,
+        { ...videoDimensions, duration: videoDuration },
+        canvas,
+        (progress) => setUploadProgress(progress)
       );
       
+      setIsUploading(false);
       setProcessingJobId(response.job_id);
     } catch (error) {
         console.error('Error submitting video:', error);
         alert('Error: Failed to submit video. Check the console for details.');
+        setIsUploading(false);
+        setUploadProgress(0);
     }
   };
 
@@ -152,10 +178,16 @@ const AppContent = () => {
     <form onSubmit={handleSubmit} className="app-layout">
       <GlobalToolbar submitButton={<SubmitButton />} />
       <PipelineUI videoFile={videoFile} videoDimensions={videoDimensions} />
-      {processingJobId && (
+      {(isUploading || processingJobId) && (
         <ProcessingDialog
           jobId={processingJobId}
-          onClose={() => setProcessingJobId(null)}
+          isUploading={isUploading}
+          uploadProgress={uploadProgress}
+          onClose={() => {
+            setProcessingJobId(null);
+            setIsUploading(false);
+            setUploadProgress(0);
+          }}
         />
       )}
     </form>

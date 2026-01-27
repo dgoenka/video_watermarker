@@ -54,27 +54,15 @@ export default function PipelineUI({ videoFile, videoDimensions }) {
   const [drawingNodeId, setDrawingNodeId] = useState(null);
 
   useEffect(() => {
-    if (!videoRef.current || !canvasWrapperRef.current) return;
-
-    const resizeObserver = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const { width, height } = entry.contentRect;
-        if (width > 0 && height > 0) {
-          // Match canvas wrapper to video size
-          canvasWrapperRef.current.style.width = `${width}px`;
-          canvasWrapperRef.current.style.height = `${height}px`;
-          // Update store for proportional scaling
-          setCanvasDimensions({ width, height });
-        }
-      }
-    });
-
-    resizeObserver.observe(videoRef.current);
-
-    return () => {
-      resizeObserver.disconnect();
-    };
-  }, [setCanvasDimensions]);
+    if (!videoDimensions) return;
+    
+    // Canvas should always match video intrinsic dimensions
+    if (canvasWrapperRef.current) {
+      canvasWrapperRef.current.style.width = `${videoDimensions.width}px`;
+      canvasWrapperRef.current.style.height = `${videoDimensions.height}px`;
+    }
+    setCanvasDimensions(videoDimensions);
+  }, [videoDimensions, setCanvasDimensions]);
 
   const getIntelligentLineColor = () => {
     if (!videoRef.current) return '#808080';

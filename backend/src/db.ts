@@ -15,10 +15,8 @@ export enum JobStatus {
 export interface Job {
   job_id: string;
   status: JobStatus;
-  output_path: string;
-  cdn_url?: string;
+  video_duration?: number;
   error_message?: string;
-  video_data: string;
   created_at: Date;
   updated_at?: Date;
 }
@@ -30,10 +28,8 @@ export async function initDb() {
       CREATE TABLE IF NOT EXISTS jobs (
         job_id VARCHAR(36) PRIMARY KEY,
         status VARCHAR(20) NOT NULL DEFAULT 'pending',
-        output_path VARCHAR(500) NOT NULL,
-        cdn_url VARCHAR(500),
+        video_duration FLOAT,
         error_message TEXT,
-        video_data TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP
       );
@@ -41,15 +37,24 @@ export async function initDb() {
       CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
       CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
     `);
+    
+    await client.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='jobs' AND column_name='video_duration') THEN
+          ALTER TABLE jobs ADD COLUMN video_duration FLOAT;
+        END IF;
+      END $$;
+    `);
   } finally {
     client.release();
   }
 }
 
-export async function createJob(jobId: string, outputPath: string, videoData: any): Promise<void> {
+export async function createJob(jobId: string, videoDuration?: number): Promise<void> {
   await pool.query(
-    'INSERT INTO jobs (job_id, status, output_path, video_data) VALUES ($1, $2, $3, $4)',
-    [jobId, JobStatus.PENDING, outputPath, JSON.stringify(videoData)]
+    'INSERT INTO jobs (job_id, status, video_duration) VALUES ($1, $2, $3)',
+    [jobId, JobStatus.PENDING, videoDuration]
   );
 }
 
@@ -69,9 +74,9 @@ export async function updateJobStatus(
   );
 }
 
-export async function updateJobCompleted(jobId: string, outputPath: string): Promise<void> {
+export async function updateJobCompleted(jobId: string): Promise<void> {
   await pool.query(
-    'UPDATE jobs SET status = $1, output_path = $2, updated_at = CURRENT_TIMESTAMP WHERE job_id = $3',
-    [JobStatus.COMPLETED, outputPath, jobId]
+    'UPDATE jobs SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE job_id = $2',
+    [JobStatus.COMPLETED, jobId]
   );
 }

@@ -1,48 +1,98 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { backendApi } from './backendApi';
 import './ProcessingDialog.css';
 
-export const ProcessingDialog = ({ jobId, onClose }) => {
+export const ProcessingDialog = ({ jobId, isUploading, uploadProgress, onClose }) => {
   const [status, setStatus] = useState(null);
   const [error, setError] = useState(null);
+  const [downloaded, setDownloaded] = useState(false);
+  const pollingRef = useRef(null);
 
   useEffect(() => {
+    if (isUploading || !jobId) return;
+    
+    let isActive = true;
+    
     const pollStatus = async () => {
+      if (!isActive) return;
+      
       try {
         const statusData = await backendApi.getStatus(jobId);
+        if (!isActive) return;
+        
         setStatus(statusData);
 
         if (statusData.status === 'completed') {
-          // Auto-download after completion
-          setTimeout(() => {
-            backendApi.downloadVideo(jobId);
-          }, 1000);
+          if (!downloaded) {
+            setDownloaded(true);
+            await backendApi.downloadVideo(jobId);
+          }
+          return;
         } else if (statusData.status === 'failed') {
           setError(statusData.error_message || 'Processing failed');
+          return;
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 500));
+        if (isActive) {
+          pollStatus();
         }
       } catch (err) {
-        setError(err.message);
+        if (isActive) {
+          setError(err.message);
+        }
       }
     };
 
     pollStatus();
-    const interval = setInterval(pollStatus, 2000);
 
-    return () => clearInterval(interval);
-  }, [jobId]);
+    return () => {
+      isActive = false;
+    };
+  }, [jobId, isUploading, downloaded]);
 
   const handleRetry = async () => {
     try {
       setError(null);
-      await backendApi.retryJob(jobId);
+      setDownloaded(false);
       setStatus({ ...status, status: 'pending' });
+      await backendApi.retryJob(jobId);
     } catch (err) {
       setError(err.message);
     }
   };
 
-  const handleDownload = () => {
-    backendApi.downloadVideo(jobId);
+  const handleCancel = async () => {
+    try {
+      if (jobId) {
+        await backendApi.cancelJob(jobId);
+      }
+      onClose();
+    } catch (err) {
+      console.error('Cancel failed:', err);
+      onClose();
+    }
+  };
+
+  const handleDownload = async () => {
+    await backendApi.downloadVideo(jobId);
+  };
+
+  const getStatusText = () => {
+    if (isUploading) return 'Uploading...';
+    if (!status) return 'Loading...';
+    if (status.status === 'pending') return 'Waiting to start...';
+    if (status.status === 'processing') return 'Processing video...';
+    if (status.status === 'completed') return 'Complete!';
+    if (status.status === 'failed') return 'Failed';
+    return status.status;
+  };
+
+  const getProgress = () => {
+    if (isUploading) return uploadProgress;
+    if (status?.status === 'completed') return 100;
+    if (status?.status === 'processing') return status.progress || 0;
+    return 0;
   };
 
   return (
@@ -51,36 +101,17 @@ export const ProcessingDialog = ({ jobId, onClose }) => {
         <div className="dialog-header">Video Processing</div>
         <div className="dialog-body">
           <div className="status-info">
-            <p><strong>Job ID:</strong> {jobId}</p>
-            <p><strong>Status:</strong> {status?.status || 'Loading...'}</p>
-            
-            {status?.status === 'pending' && (
-              <div className="status-message">
-                <div className="spinner"></div>
-                <p>Waiting to start...</p>
+            <p><strong>Status:</strong> {getStatusText()}</p>
+            <div className="progress-container">
+              <div className="progress-bar">
+                <div 
+                  className="progress-fill" 
+                  style={{ width: `${getProgress()}%` }}
+                ></div>
               </div>
-            )}
-            
-            {status?.status === 'processing' && (
-              <div className="status-message">
-                <div className="spinner"></div>
-                <p>Processing video with overlays...</p>
-              </div>
-            )}
-            
-            {status?.status === 'completed' && (
-              <div className="status-message success">
-                <p>✓ Processing completed!</p>
-                <p>Download will start automatically...</p>
-              </div>
-            )}
-            
-            {status?.status === 'failed' && (
-              <div className="status-message error">
-                <p>✗ Processing failed</p>
-                {error && <p className="error-text">{error}</p>}
-              </div>
-            )}
+              <p className="progress-text">{getProgress()}%</p>
+            </div>
+            {error && <p className="error-text">{error}</p>}
           </div>
         </div>
         <div className="dialog-footer">
@@ -90,13 +121,25 @@ export const ProcessingDialog = ({ jobId, onClose }) => {
             </button>
           )}
           {status?.status === 'failed' && (
-            <button className="dialog-button" onClick={handleRetry}>
-              Retry
+            <>
+              <button className="dialog-button" onClick={handleRetry}>
+                Retry
+              </button>
+              <button className="dialog-button" onClick={handleCancel}>
+                Cancel
+              </button>
+            </>
+          )}
+          {status?.status !== 'failed' && status?.status !== 'completed' && (
+            <button className="dialog-button" onClick={handleCancel}>
+              Cancel
             </button>
           )}
-          <button className="dialog-button" onClick={onClose}>
-            Close
-          </button>
+          {status?.status === 'completed' && (
+            <button className="dialog-button" onClick={onClose}>
+              Close
+            </button>
+          )}
         </div>
       </div>
     </div>

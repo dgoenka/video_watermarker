@@ -131,6 +131,7 @@ export const NodeWrapper = ({ id, children, position, width, height, selected, t
   return (
   <div
     className={`node-wrapper ${type ? `node-wrapper--${type}` : ''} ${selected ? 'selected' : ''}`}
+    data-node-id={id}
     style={{
       left: position.x,
       top: position.y,
