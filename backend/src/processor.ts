@@ -56,8 +56,9 @@ export class VideoProcessor {
     const canvasWidth = this.videoData.canvas_width || videoWidth;
     const canvasHeight = this.videoData.canvas_height || videoHeight;
     
-    const scaleX = videoWidth / canvasWidth;
-    const scaleY = videoHeight / canvasHeight;
+    // No scaling needed if canvas and video dimensions match
+    const scaleX = canvasWidth === videoWidth ? 1 : videoWidth / canvasWidth;
+    const scaleY = canvasHeight === videoHeight ? 1 : videoHeight / canvasHeight;
     
     console.log(`Canvas ${canvasWidth}x${canvasHeight} -> Video ${videoWidth}x${videoHeight}, scale=(${scaleX.toFixed(3)}, ${scaleY.toFixed(3)})`);
     
@@ -130,17 +131,31 @@ export class VideoProcessor {
     }
     
     if (styles.fillType === 'radial') {
-      // Simplified radial gradient - use a solid color for now to avoid complex geq filters
+      // Use a simple radial gradient with drawbox overlay
       const color1 = rgbToHex(styles.gradientColor1 || '#ffffff');
-      const fillColorWithAlpha = `${color1}${alpha}`;
-      const fillFilter = `drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${fillColorWithAlpha}:t=fill:enable='${enableConditions}'`;
-      filters.push(fillFilter);
+      const color2 = rgbToHex(styles.gradientColor2 || '#000000');
+      
+      // Create base with first color
+      const baseFilter = `drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${color1}${alpha}:t=fill:enable='${enableConditions}'`;
+      filters.push(baseFilter);
+      
+      // Add second color as overlay with reduced opacity for gradient effect
+      const overlayAlpha = Math.round(opacity * 128).toString(16).padStart(2, '0');
+      const overlayFilter = `drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${color2}${overlayAlpha}:t=fill:enable='${enableConditions}'`;
+      filters.push(overlayFilter);
     } else if (styles.fillType === 'gradient') {
-      // Simplified linear gradient - use a solid color for now
+      // Simple linear gradient with two layers
       const color1 = rgbToHex(styles.gradientColor1 || '#ffffff');
-      const fillColorWithAlpha = `${color1}${alpha}`;
-      const fillFilter = `drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${fillColorWithAlpha}:t=fill:enable='${enableConditions}'`;
-      filters.push(fillFilter);
+      const color2 = rgbToHex(styles.gradientColor2 || '#000000');
+      
+      // Create base with first color
+      const baseFilter = `drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${color1}${alpha}:t=fill:enable='${enableConditions}'`;
+      filters.push(baseFilter);
+      
+      // Add second color as overlay
+      const overlayAlpha = Math.round(opacity * 128).toString(16).padStart(2, '0');
+      const overlayFilter = `drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${color2}${overlayAlpha}:t=fill:enable='${enableConditions}'`;
+      filters.push(overlayFilter);
     } else {
       const fillFilter = `drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${fillColorWithAlpha}:t=fill:enable='${enableConditions}'`;
       filters.push(fillFilter);
@@ -220,12 +235,12 @@ export class VideoProcessor {
       
       if (textAlign === 'center') {
         xPos = x + (data.width || 100) / 2;
-        textFilter += `:x=${xPos}-text_w/2:y=${yPos}`;
+        textFilter += `:x=${xPos}-text_w/2:y=${y + index * lineHeight}`;
       } else if (textAlign === 'right') {
         xPos = x + (data.width || 100);
-        textFilter += `:x=${xPos}-text_w:y=${yPos}`;
+        textFilter += `:x=${xPos}-text_w:y=${y + index * lineHeight}`;
       } else {
-        textFilter += `:x=${xPos}:y=${yPos}`;
+        textFilter += `:x=${xPos}:y=${y + index * lineHeight}`;
       }
       
       textFilter += `:enable='${enableConditions}'`;
@@ -308,8 +323,16 @@ export class VideoProcessor {
     }
     
     return new Promise((resolve) => {
-      const ffmpeg = spawn('ffmpeg', [...args, '-progress', progressPath]);
+      const ffmpeg = spawn('ffmpeg', [...args, '-progress', 'pipe:1']);
       let stderr = '';
+      
+      ffmpeg.stdout.on('data', (data) => {
+        const lines = data.toString().split('\n').filter(l => l.trim());
+        const timeMatch = lines.find(l => l.startsWith('out_time_ms='));
+        if (timeMatch) {
+          fs.writeFile(progressPath, timeMatch).catch(() => {});
+        }
+      });
       
       ffmpeg.stderr.on('data', (data) => {
         stderr += data.toString();
