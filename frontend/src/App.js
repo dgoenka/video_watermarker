@@ -118,8 +118,9 @@ const AppContent = () => {
       const processedNodes = nodes.map(node => {
         if (node.type === 'text') {
           // Find the text content from the DOM element
-          const textElement = document.querySelector(`[data-node-id="${node.id}"] [contenteditable]`);
-          const textContent = textElement ? textElement.innerText : 'Text';
+          const nodeWrapper = document.querySelector(`[data-node-id="${node.id}"]`);
+          const textElement = nodeWrapper?.querySelector('[contenteditable]');
+          const textContent = textElement?.innerText || node.data?.text || 'Text';
           return {
             ...node,
             data: {

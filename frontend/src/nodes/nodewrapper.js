@@ -26,6 +26,7 @@ export const NodeWrapper = ({ id, children, position, width, height, selected, t
   const [isResizing, setIsResizing] = useState(null);
   const dragOffset = useRef({ x: 0, y: 0 });
   const resizeStart = useRef({ x: 0, y: 0, width: 0, height: 0, position: { x: 0, y: 0 } });
+  const wrapperRef = useRef(null);
 
   const node = nodes.find(n => n.id === id);
   const rotation = node?.data?.rotation || 0;
@@ -126,10 +127,11 @@ export const NodeWrapper = ({ id, children, position, width, height, selected, t
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
     };
-  }, [isDragging, isResizing, onNodesChange, id, rotation]);
+  }, [isDragging, isResizing, onNodesChange, id, rotation, width, height]);
 
   return (
   <div
+    ref={wrapperRef}
     className={`node-wrapper ${type ? `node-wrapper--${type}` : ''} ${selected ? 'selected' : ''}`}
     data-node-id={id}
     style={{

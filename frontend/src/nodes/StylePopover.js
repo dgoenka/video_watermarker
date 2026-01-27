@@ -205,7 +205,7 @@ export const StylePopover = ({ nodeType, styles, setStyles }) => {
           <option value="Trebuchet MS">Trebuchet MS</option>
         </select>
       </div>
-      <Slider label="Size" value={styles.fontSize} onChange={e => handleStyleChange('fontSize', parseInt(e.target.value))} min="8" max="100" step="1" unit="px" />
+      <Slider label="Size" value={styles.fontSize} onChange={e => handleStyleChange('fontSize', parseInt(e.target.value))} min="12" max="200" step="2" unit="px" />
       
       <div className="style-control-group">
         <label>Fill Type</label>

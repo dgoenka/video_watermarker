@@ -68,6 +68,8 @@ export class VideoProcessor {
       const styles = data.styles || {};
       const windows = this.calculateVisibilityWindows(timestamps, this.videoData.video_duration);
       
+      console.log(`Component ${component.id} (${type}): fillType=${styles.fillType}, fillColor=${styles.fillColor}, text=${data.text}`);
+      
       const x = Math.round(position.x * scaleX);
       const y = Math.round(position.y * scaleY);
       const w = Math.round(width * scaleX);
@@ -90,29 +92,6 @@ export class VideoProcessor {
     styles: any, windows: [number, number][]
   ): string[] {
     const filters: string[] = [];
-    let fillColor = styles.fillColor || '#ffffff';
-    let borderColor = styles.borderColor || '#000000';
-    
-    const rgbToHex = (color: string) => {
-      if (color.startsWith('rgb')) {
-        const match = color.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
-        if (match) {
-          const hex = `${parseInt(match[1]).toString(16).padStart(2, '0')}${parseInt(match[2]).toString(16).padStart(2, '0')}${parseInt(match[3]).toString(16).padStart(2, '0')}`;
-          return `0x${hex}`;
-        }
-      }
-      if (color.startsWith('#')) {
-        return `0x${color.slice(1)}`;
-      }
-      return color;
-    };
-    
-    fillColor = rgbToHex(fillColor);
-    borderColor = rgbToHex(borderColor);
-    const borderWidth = styles.borderWidth || 1;
-    const opacity = parseFloat(styles.opacity) || 1.0;
-    const alpha = Math.round(opacity * 255).toString(16).padStart(2, '0');
-    const fillColorWithAlpha = `${fillColor}${alpha}`;
     
     if (windows.length === 0) return filters;
     
@@ -122,48 +101,62 @@ export class VideoProcessor {
       return start === end ? `gte(t,${s})` : `between(t,${s},${e})`;
     }).join('+');
     
+    const rgbToHex = (color: string) => {
+      if (color.startsWith('rgb')) {
+        const match = color.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+        if (match) {
+          return `0x${parseInt(match[1]).toString(16).padStart(2, '0')}${parseInt(match[2]).toString(16).padStart(2, '0')}${parseInt(match[3]).toString(16).padStart(2, '0')}`;
+        }
+      }
+      if (color.startsWith('#')) {
+        return `0x${color.slice(1)}`;
+      }
+      return color === 'transparent' ? null : `0x${color}`;
+    };
+    
+    const opacity = parseFloat(styles.opacity) || 1.0;
+    const alpha = Math.round(opacity * 255).toString(16).padStart(2, '0');
+    
+    // Shadow
     if (styles.hasShadow) {
       const shadowColor = rgbToHex(styles.shadowColor || '#000000');
-      const shadowX = x + parseInt(styles.shadowOffsetX || 0);
-      const shadowY = y + parseInt(styles.shadowOffsetY || 0);
-      const shadowFilter = `drawbox=x=${shadowX}:y=${shadowY}:w=${w}:h=${h}:color=${shadowColor}80:t=fill:enable='${enableConditions}'`;
-      filters.push(shadowFilter);
+      if (shadowColor) {
+        const shadowX = x + parseInt(styles.shadowOffsetX || 0);
+        const shadowY = y + parseInt(styles.shadowOffsetY || 0);
+        filters.push(`drawbox=x=${shadowX}:y=${shadowY}:w=${w}:h=${h}:color=${shadowColor}80:t=fill:enable='${enableConditions}'`);
+      }
     }
     
-    if (styles.fillType === 'radial') {
-      // Use a simple radial gradient with drawbox overlay
+    // Fill
+    if (styles.fillType === 'gradient') {
       const color1 = rgbToHex(styles.gradientColor1 || '#ffffff');
       const color2 = rgbToHex(styles.gradientColor2 || '#000000');
-      
-      // Create base with first color
-      const baseFilter = `drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${color1}${alpha}:t=fill:enable='${enableConditions}'`;
-      filters.push(baseFilter);
-      
-      // Add second color as overlay with reduced opacity for gradient effect
-      const overlayAlpha = Math.round(opacity * 128).toString(16).padStart(2, '0');
-      const overlayFilter = `drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${color2}${overlayAlpha}:t=fill:enable='${enableConditions}'`;
-      filters.push(overlayFilter);
-    } else if (styles.fillType === 'gradient') {
-      // Simple linear gradient with two layers
+      if (color1 && color2) {
+        const angle = styles.gradientAngle || 0;
+        const gradientFilter = `drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${color1}${alpha}:t=fill:enable='${enableConditions}',` +
+                              `drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${color2}${alpha}:t=fill:enable='${enableConditions}'`;
+        filters.push(gradientFilter);
+      }
+    } else if (styles.fillType === 'radial') {
       const color1 = rgbToHex(styles.gradientColor1 || '#ffffff');
       const color2 = rgbToHex(styles.gradientColor2 || '#000000');
-      
-      // Create base with first color
-      const baseFilter = `drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${color1}${alpha}:t=fill:enable='${enableConditions}'`;
-      filters.push(baseFilter);
-      
-      // Add second color as overlay
-      const overlayAlpha = Math.round(opacity * 128).toString(16).padStart(2, '0');
-      const overlayFilter = `drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${color2}${overlayAlpha}:t=fill:enable='${enableConditions}'`;
-      filters.push(overlayFilter);
+      if (color1 && color2) {
+        filters.push(`drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${color1}${alpha}:t=fill:enable='${enableConditions}'`);
+      }
     } else {
-      const fillFilter = `drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${fillColorWithAlpha}:t=fill:enable='${enableConditions}'`;
-      filters.push(fillFilter);
+      const fillColor = rgbToHex(styles.fillColor || '#ffffff');
+      if (fillColor) {
+        filters.push(`drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${fillColor}${alpha}:t=fill:enable='${enableConditions}'`);
+      }
     }
     
+    // Border
+    const borderWidth = styles.borderWidth || 0;
     if (borderWidth > 0) {
-      const borderFilter = `drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${borderColor}:t=${borderWidth}:enable='${enableConditions}'`;
-      filters.push(borderFilter);
+      const borderColor = rgbToHex(styles.borderColor || '#000000');
+      if (borderColor) {
+        filters.push(`drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${borderColor}:t=${borderWidth}:enable='${enableConditions}'`);
+      }
     }
     
     return filters;
@@ -177,6 +170,20 @@ export class VideoProcessor {
     const lines = rawText.split('\n');
     const fontSize = Math.round((styles.fontSize || 16) * Math.min(scaleX, scaleY));
     let fontColor = styles.fontColor || '#000000';
+    
+    // Handle gradient text
+    if (styles.textFillType === 'gradient' || styles.textFillType === 'radial') {
+      const color1 = styles.textGradientColor1 || '#ffffff';
+      
+      if (color1.startsWith('rgb')) {
+        const match = color1.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+        if (match) {
+          fontColor = `#${parseInt(match[1]).toString(16).padStart(2, '0')}${parseInt(match[2]).toString(16).padStart(2, '0')}${parseInt(match[3]).toString(16).padStart(2, '0')}`;
+        }
+      } else {
+        fontColor = color1;
+      }
+    }
     
     if (fontColor.startsWith('rgb')) {
       const match = fontColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
@@ -195,6 +202,8 @@ export class VideoProcessor {
     
     const textAlign = styles.textAlign || 'left';
     const lineHeight = Math.round(fontSize * 1.2);
+    const containerWidth = data.width;
+    const containerHeight = data.height;
     
     if (windows.length === 0) return filters;
     
@@ -204,27 +213,32 @@ export class VideoProcessor {
       return start === end ? `gte(t,${s})` : `between(t,${s},${e})`;
     }).join('+');
     
+    // Add background only if explicitly set and not transparent
+    if (styles.fillType && styles.fillType !== 'none' && styles.fillColor && styles.fillColor !== 'transparent' && containerWidth && containerHeight) {
+      const bgFilters = this.generateShapeFilters(x, y, containerWidth, containerHeight, styles, windows);
+      filters.push(...bgFilters);
+    }
+    
     lines.forEach((line: string, index: number) => {
       const text = line.replace(/'/g, "'").replace(/\\/g, '\\\\').replace(/:/g, '\\:').trim();
       if (!text) return;
       
-      const yPos = y + (index * lineHeight) + fontSize;
-      let xPos = x;
+      // Adjust y position to account for text baseline
+      const yPos = y + (index * lineHeight) + Math.round(fontSize * 0.8);
       
       if (styles.hasShadow) {
-        // Simplified shadow - single shadow instead of blur loop
-        const shadowOffsetX = styles.shadowOffsetX || 2;
-        const shadowOffsetY = styles.shadowOffsetY || 2;
+        const shadowOffsetX = Math.round((styles.shadowOffsetX || 2) * scaleX);
+        const shadowOffsetY = Math.round((styles.shadowOffsetY || 2) * scaleY);
         const shadowColor = styles.shadowColor || '#000000';
         
         let shadowFilter = `drawtext=text='${text}':fontfile=${fontFile}:fontsize=${fontSize}:fontcolor=${shadowColor}80:box=0`;
         
         if (textAlign === 'center') {
-          shadowFilter += `:x=${x + (data.width || 100) / 2 + shadowOffsetX}-text_w/2:y=${yPos + shadowOffsetY}`;
+          shadowFilter += `:x=${x + containerWidth / 2 + shadowOffsetX}-text_w/2:y=${yPos + shadowOffsetY}`;
         } else if (textAlign === 'right') {
-          shadowFilter += `:x=${x + (data.width || 100) + shadowOffsetX}-text_w:y=${yPos + shadowOffsetY}`;
+          shadowFilter += `:x=${x + containerWidth + shadowOffsetX}-text_w:y=${yPos + shadowOffsetY}`;
         } else {
-          shadowFilter += `:x=${xPos + shadowOffsetX}:y=${yPos + shadowOffsetY}`;
+          shadowFilter += `:x=${x + shadowOffsetX}:y=${yPos + shadowOffsetY}`;
         }
         
         shadowFilter += `:enable='${enableConditions}'`;
@@ -234,13 +248,11 @@ export class VideoProcessor {
       let textFilter = `drawtext=text='${text}':fontfile=${fontFile}:fontsize=${fontSize}:fontcolor=${fontColor}:box=0`;
       
       if (textAlign === 'center') {
-        xPos = x + (data.width || 100) / 2;
-        textFilter += `:x=${xPos}-text_w/2:y=${y + index * lineHeight}`;
+        textFilter += `:x=${x + containerWidth / 2}-text_w/2:y=${yPos}`;
       } else if (textAlign === 'right') {
-        xPos = x + (data.width || 100);
-        textFilter += `:x=${xPos}-text_w:y=${y + index * lineHeight}`;
+        textFilter += `:x=${x + containerWidth}-text_w:y=${yPos}`;
       } else {
-        textFilter += `:x=${xPos}:y=${y + index * lineHeight}`;
+        textFilter += `:x=${x}:y=${yPos}`;
       }
       
       textFilter += `:enable='${enableConditions}'`;

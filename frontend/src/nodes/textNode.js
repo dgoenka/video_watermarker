@@ -5,7 +5,7 @@ import { withNodeFeatures } from './withNodeFeatures';
 import { getBackgroundStyle } from '../utils';
 
 const TextNodeComponent = ({ id, data, styles, isVisible }) => {
-  const [text, setText] = useState('Enter text');
+  const [text, setText] = useState(data.text || 'Enter text');
   const [isEditing, setIsEditing] = useState(false);
   const onNodesChange = useStore((state) => state.onNodesChange);
   const textRef = useRef(null);
@@ -25,11 +25,12 @@ const TextNodeComponent = ({ id, data, styles, isVisible }) => {
 
   useEffect(() => {
     if (textRef.current && !isEditing) {
-      if (textRef.current.innerText !== text) {
-        textRef.current.innerText = text;
+      const storedText = data.text || text;
+      if (textRef.current.innerText !== storedText) {
+        textRef.current.innerText = storedText;
       }
     }
-  }, [text, isEditing]);
+  }, [text, isEditing, data.text]);
 
   useEffect(() => {
     if (isEditing && textRef.current) {
@@ -39,6 +40,11 @@ const TextNodeComponent = ({ id, data, styles, isVisible }) => {
 
   const handleInput = (e) => {
     setText(e.target.innerText);
+    onNodesChange([{
+      type: 'data',
+      id,
+      data: { ...data, text: e.target.innerText }
+    }]);
   };
 
   const handleKeyDown = (e) => {
@@ -61,15 +67,20 @@ const TextNodeComponent = ({ id, data, styles, isVisible }) => {
           lineHeight: 1.2,
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
-          padding: 0,
+          padding: '2px',
           margin: 0,
           outline: 'none',
+          minHeight: `${styles.fontSize * 1.2}px`,
+          display: 'flex',
+          alignItems: styles.textAlign === 'center' ? 'center' : (styles.textAlign === 'right' ? 'flex-end' : 'flex-start'),
+          justifyContent: styles.textAlign === 'center' ? 'center' : (styles.textAlign === 'right' ? 'flex-end' : 'flex-start'),
       };
 
       if (styles.textFillType === 'gradient') {
           return {
               ...baseStyles,
               background: `linear-gradient(${styles.textGradientAngle}deg, ${styles.textGradientColor1}, ${styles.textGradientColor2})`,
+              backgroundClip: 'text',
               WebkitBackgroundClip: 'text',
               WebkitTextFillColor: 'transparent',
               color: 'transparent',
@@ -79,6 +90,7 @@ const TextNodeComponent = ({ id, data, styles, isVisible }) => {
           return {
               ...baseStyles,
               background: `radial-gradient(circle, ${styles.textGradientColor1}, ${styles.textGradientColor2})`,
+              backgroundClip: 'text',
               WebkitBackgroundClip: 'text',
               WebkitTextFillColor: 'transparent',
               color: 'transparent',
@@ -123,6 +135,8 @@ const TextNodeComponent = ({ id, data, styles, isVisible }) => {
             height: '100%',
             ...getTextStyles(),
             cursor: isEditing ? 'text' : 'inherit',
+            overflow: 'hidden',
+            boxSizing: 'border-box',
           }}
         />
     </div>

@@ -56,7 +56,6 @@ export default function PipelineUI({ videoFile, videoDimensions }) {
   useEffect(() => {
     if (!videoDimensions) return;
     
-    // Canvas should always match video intrinsic dimensions
     if (canvasWrapperRef.current) {
       canvasWrapperRef.current.style.width = `${videoDimensions.width}px`;
       canvasWrapperRef.current.style.height = `${videoDimensions.height}px`;
@@ -112,7 +111,6 @@ export default function PipelineUI({ videoFile, videoDimensions }) {
       
       const avgBrightness = totalBrightness / (data.length / 4);
       const intensity1 = Math.max(0, Math.min(255, Math.round(255 - avgBrightness)));
-      // Second color: offset by 128 for contrast
       const intensity2 = Math.max(0, Math.min(255, Math.round((255 - avgBrightness + 128) % 256)));
       
       return {
@@ -122,17 +120,6 @@ export default function PipelineUI({ videoFile, videoDimensions }) {
     } catch {
       return { color1: '#808080', color2: '#404040' };
     }
-  };
-
-  const project = ({ x, y }) => {
-    if (!canvasWrapperRef.current) return { x, y };
-    const bounds = canvasWrapperRef.current.getBoundingClientRect();
-    const relativeX = x - bounds.left;
-    const relativeY = y - bounds.top;
-    return { 
-      x: Math.max(0, Math.min(relativeX, bounds.width)), 
-      y: Math.max(0, Math.min(relativeY, bounds.height)) 
-    };
   };
 
   const onMouseDown = useCallback((event) => {
@@ -151,7 +138,11 @@ export default function PipelineUI({ videoFile, videoDimensions }) {
       return;
     }
 
-    const position = project({ x: event.clientX, y: event.clientY });
+    const bounds = canvasWrapperRef.current.getBoundingClientRect();
+    const position = {
+      x: event.clientX - bounds.left,
+      y: event.clientY - bounds.top
+    };
     const nodeID = getNodeID(drawingMode);
     
     const newNode = {
@@ -182,7 +173,11 @@ export default function PipelineUI({ videoFile, videoDimensions }) {
   const onMouseMove = useCallback((event) => {
     if (!isDrawing || !drawingNodeId || !drawingStartPos) return;
 
-    const currentPos = project({ x: event.clientX, y: event.clientY });
+    const bounds = canvasWrapperRef.current.getBoundingClientRect();
+    const currentPos = {
+      x: event.clientX - bounds.left,
+      y: event.clientY - bounds.top
+    };
     let width = currentPos.x - drawingStartPos.x;
     let height = currentPos.y - drawingStartPos.y;
     let x = drawingStartPos.x;
