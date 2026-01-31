@@ -1,5 +1,9 @@
 node_modules/
 dist/
 .env
-uploads/
+# project-local uploads are no longer used; outputs should be stored under OUTPUT_DIR (env)
+# uploads/
 *.log
+
+# test artifacts
+tests/output/

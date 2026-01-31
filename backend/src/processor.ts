@@ -1,5 +1,6 @@
 import { spawn } from 'child_process';
 import { promises as fs } from 'fs';
+import * as fsSync from 'fs';
 import * as path from 'path';
 
 const FONT_CONFIG = require('../../font-config.json');
@@ -34,17 +35,24 @@ export class VideoProcessor {
   ) {}
 
   private calculateVisibilityWindows(timestamps: number[], duration: number): [number, number][] {
-    if (!timestamps || timestamps.length === 0) return [];
-    
+    // If no timestamps are provided, default to visible for the whole duration
+    if (!timestamps || timestamps.length === 0) return [[0, duration]];
+
     const sorted = [...timestamps].sort((a, b) => a - b);
     const windows: [number, number][] = [];
-    
+
     for (let i = 0; i < sorted.length; i += 2) {
       const start = sorted[i];
       const end = sorted[i + 1] !== undefined ? sorted[i + 1] : duration;
-      windows.push([start, end]);
+      // allow zero-length windows (start === end) so enable can use gte(t,start)
+      if (typeof start === 'number' && typeof end === 'number' && end >= start) {
+        windows.push([start, end]);
+      }
     }
-    
+
+    // If no valid windows were formed (e.g. malformed timestamps), fallback to full-duration
+    if (windows.length === 0) return [[0, duration]];
+
     return windows;
   }
 
@@ -53,35 +61,95 @@ export class VideoProcessor {
     
     const videoWidth = this.videoData.video_width;
     const videoHeight = this.videoData.video_height;
-    const canvasWidth = this.videoData.canvas_width || videoWidth;
-    const canvasHeight = this.videoData.canvas_height || videoHeight;
-    
-    // No scaling needed if canvas and video dimensions match
-    const scaleX = canvasWidth === videoWidth ? 1 : videoWidth / canvasWidth;
-    const scaleY = canvasHeight === videoHeight ? 1 : videoHeight / canvasHeight;
-    
+    const canvasWidth = this.videoData.canvas_width || (this.videoData as any).canvasWidth || videoWidth;
+    const canvasHeight = this.videoData.canvas_height || (this.videoData as any).canvasHeight || videoHeight;
+
+    // Allow frontend to send the actual DOM/video element size (video_node_width/height).
+    // If present, scale coordinates from that browser-rendered size to actual video resolution.
+    const videoNodeWidth = (this.videoData as any).video_node_width || (this.videoData as any).videoNodeWidth || canvasWidth;
+    const videoNodeHeight = (this.videoData as any).video_node_height || (this.videoData as any).videoNodeHeight || canvasHeight;
+
+    const scaleX = videoNodeWidth === videoWidth ? 1 : videoWidth / videoNodeWidth;
+    const scaleY = videoNodeHeight === videoHeight ? 1 : videoHeight / videoNodeHeight;
+
     console.log(`Canvas ${canvasWidth}x${canvasHeight} -> Video ${videoWidth}x${videoHeight}, scale=(${scaleX.toFixed(3)}, ${scaleY.toFixed(3)})`);
     
-    for (const component of this.videoData.nodes) {
+    // Sort nodes by zIndex if available
+    const sortedNodes = [...this.videoData.nodes].sort((a, b) => {
+      const zA = (a.data as any).zIndex || 0;
+      const zB = (b.data as any).zIndex || 0;
+      return zA - zB;
+    });
+
+    console.log(`generateFilters(): nodes count=${sortedNodes.length}`);
+
+    const hasGradient = sortedNodes.some(n =>
+      (n.type === 'rectangle' || n.type === 'circle') && (n.data.styles?.fillType === 'gradient' || n.data.styles?.fillType === 'radial')
+    );
+
+    // Use rgba (Packed RGB with Alpha) for gradient processing.
+    // This ensures alpha channel is available for blending (shadows, opacity)
+    // and works with geq (component-wise) and drawtext/drawbox.
+    if (hasGradient) {
+      filters.push('format=rgba');
+    }
+    
+    for (const component of sortedNodes) {
       const { type, position, width, height, data } = component;
+      
+      if (data.visible === false) {
+        console.log(`Skipping component ${component.id} because visible=false`);
+        continue;
+      }
+
       const timestamps = data.timestamps || [];
       const styles = data.styles || {};
       const windows = this.calculateVisibilityWindows(timestamps, this.videoData.video_duration);
       
+      // Log detailed info for debugging
+      console.log(`Component ${component.id} (${type}) -> position=(${position.x},${position.y}) size=(${width}x${height}) windows=${JSON.stringify(windows)} styles=${JSON.stringify(styles)}`);
+
       console.log(`Component ${component.id} (${type}): fillType=${styles.fillType}, fillColor=${styles.fillColor}, text=${data.text}`);
       
-      const x = Math.round(position.x * scaleX);
-      const y = Math.round(position.y * scaleY);
-      const w = Math.round(width * scaleX);
-      const h = Math.round(height * scaleY);
-      
+      // Convert positions/sizes to pixels. Frontend may send percentages (0-100)
+      // when `use_percentages` is true. Detect that and convert using video dimensions.
+      let x: number;
+      let y: number;
+      let w: number;
+      let h: number;
+
+      const usePercentages = !!(this.videoData as any).use_percentages;
+
+      const toPxX = (val: any) => {
+        const n = parseFloat(val as any);
+        if (isNaN(n)) return 0;
+        if (usePercentages) return Math.round((n / 100) * videoWidth);
+        return Math.round(n * scaleX);
+      };
+      const toPxY = (val: any) => {
+        const n = parseFloat(val as any);
+        if (isNaN(n)) return 0;
+        if (usePercentages) return Math.round((n / 100) * videoHeight);
+        return Math.round(n * scaleY);
+      };
+
+      x = toPxX(position.x);
+      y = toPxY(position.y);
+      // width/height percent values are relative to canvas width/height respectively
+      w = toPxX(width);
+      h = toPxY(height);
+
       if (type === 'rectangle' || type === 'circle') {
-        filters.push(...this.generateShapeFilters(x, y, w, h, styles, windows));
+        filters.push(...this.generateShapeFilters(x, y, w, h, styles, windows, scaleX, scaleY));
       } else if (type === 'text') {
         filters.push(...this.generateTextFilters(x, y, { ...data, width: w, height: h }, styles, windows, scaleX, scaleY));
       } else if (type === 'line') {
         filters.push(...this.generateLineFilters(data, styles, windows, scaleX, scaleY));
       }
+    }
+
+    if (hasGradient) {
+      filters.push('format=yuv420p');
     }
     
     return filters;
@@ -89,12 +157,14 @@ export class VideoProcessor {
 
   private generateShapeFilters(
     x: number, y: number, w: number, h: number,
-    styles: any, windows: [number, number][]
+    styles: any, windows: [number, number][], scaleX: number, scaleY: number
   ): string[] {
     const filters: string[] = [];
     
-    if (windows.length === 0) return filters;
+    if (windows.length === 0 || w <= 0 || h <= 0) return filters;
     
+    console.log(`generateShapeFilters(): x=${x} y=${y} w=${w} h=${h} styles=${JSON.stringify(styles)} windows=${JSON.stringify(windows)}`);
+
     const enableConditions = windows.map(([start, end]) => {
       const s = start.toFixed(3);
       const e = end.toFixed(3);
@@ -103,7 +173,7 @@ export class VideoProcessor {
     
     const rgbToHex = (color: string) => {
       if (color.startsWith('rgb')) {
-        const match = color.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+        const match = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
         if (match) {
           return `0x${parseInt(match[1]).toString(16).padStart(2, '0')}${parseInt(match[2]).toString(16).padStart(2, '0')}${parseInt(match[3]).toString(16).padStart(2, '0')}`;
         }
@@ -117,31 +187,85 @@ export class VideoProcessor {
     const opacity = parseFloat(styles.opacity) || 1.0;
     const alpha = Math.round(opacity * 255).toString(16).padStart(2, '0');
     
-    // Shadow
+    // Shadow (approximate blur by emitting multiple expanded drawboxes with decreasing alpha)
     if (styles.hasShadow) {
-      const shadowColor = rgbToHex(styles.shadowColor || '#000000');
-      if (shadowColor) {
-        const shadowX = x + parseInt(styles.shadowOffsetX || 0);
-        const shadowY = y + parseInt(styles.shadowOffsetY || 0);
-        filters.push(`drawbox=x=${shadowX}:y=${shadowY}:w=${w}:h=${h}:color=${shadowColor}80:t=fill:enable='${enableConditions}'`);
+      const rawShadowColor = styles.shadowColor || '#000000';
+      const shadowColorHex = rgbToHex(rawShadowColor);
+      if (shadowColorHex) {
+        const offsetX = Math.round((parseFloat(styles.shadowOffsetX) || 0) * scaleX);
+        const offsetY = Math.round((parseFloat(styles.shadowOffsetY) || 0) * scaleY);
+        const baseX = x + offsetX;
+        const baseY = y + offsetY;
+        const shadowBlur = Math.min(12, Math.max(0, Math.round(parseFloat(styles.shadowBlur as any) || 4)));
+        const steps = Math.max(1, Math.min(6, Math.ceil(shadowBlur / 2)));
+        const baseOpacity = Math.max(0, Math.min(1, parseFloat(styles.shadowOpacity as any) || 0.5));
+
+        for (let i = 0; i < steps; i++) {
+          // expand box by i pixels (scaled) to approximate blur spread
+          const expand = i; // pixels
+          const sx = baseX - expand;
+          const sy = baseY - expand;
+          const sw = w + expand * 2;
+          const sh = h + expand * 2;
+          const alpha = Math.round(baseOpacity * 255 * (1 - i / (steps + 1)));
+          const alphaHex = alpha.toString(16).padStart(2, '0');
+          filters.push(`drawbox=x=${sx}:y=${sy}:w=${sw}:h=${sh}:color=${shadowColorHex}${alphaHex}:t=fill:enable='${enableConditions}'`);
+        }
       }
     }
     
     // Fill
     if (styles.fillType === 'gradient') {
-      const color1 = rgbToHex(styles.gradientColor1 || '#ffffff');
-      const color2 = rgbToHex(styles.gradientColor2 || '#000000');
-      if (color1 && color2) {
-        const angle = styles.gradientAngle || 0;
-        const gradientFilter = `drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${color1}${alpha}:t=fill:enable='${enableConditions}',` +
-                              `drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${color2}${alpha}:t=fill:enable='${enableConditions}'`;
-        filters.push(gradientFilter);
+      const c1 = this.parseColor(styles.gradientColor1 || '#ffffff');
+      const c2 = this.parseColor(styles.gradientColor2 || '#000000');
+      
+      if (c1 && c2) {
+        // Vertical gradient interpolation
+        const rExpr = `(((${c1.r} * (${h} - (Y - ${y})) + ${c2.r} * (Y - ${y})) / ${h}) * ${opacity} + p(X,Y) * (1 - ${opacity}))`;
+        const gExpr = `(((${c1.g} * (${h} - (Y - ${y})) + ${c2.g} * (Y - ${y})) / ${h}) * ${opacity} + p(X,Y) * (1 - ${opacity}))`;
+        const bExpr = `(((${c1.b} * (${h} - (Y - ${y})) + ${c2.b} * (Y - ${y})) / ${h}) * ${opacity} + p(X,Y) * (1 - ${opacity}))`;
+        
+        // For rgba format:
+        // r (Component 0) -> Red
+        // g (Component 1) -> Green
+        // b (Component 2) -> Blue
+        // a (Component 3) -> Alpha
+        filters.push(`geq=r='if(between(X,${x},${x+w})*between(Y,${y},${y+h}),${rExpr},p(X,Y))':` +
+                     `g='if(between(X,${x},${x+w})*between(Y,${y},${y+h}),${gExpr},p(X,Y))':` +
+                     `b='if(between(X,${x},${x+w})*between(Y,${y},${y+h}),${bExpr},p(X,Y))':` +
+                     `a='p(X,Y)':enable='${enableConditions}'`);
       }
     } else if (styles.fillType === 'radial') {
-      const color1 = rgbToHex(styles.gradientColor1 || '#ffffff');
-      const color2 = rgbToHex(styles.gradientColor2 || '#000000');
-      if (color1 && color2) {
-        filters.push(`drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=${color1}${alpha}:t=fill:enable='${enableConditions}'`);
+      // Implement radial gradient using geq:
+      const c1 = this.parseColor(styles.gradientColor1 || '#ffffff');
+      const c2 = this.parseColor(styles.gradientColor2 || '#000000');
+      if (c1 && c2) {
+        // center and maximum radius
+        const cx = x + w / 2;
+        const cy = y + h / 2;
+        const maxR = Math.sqrt((w / 2) * (w / 2) + (h / 2) * (h / 2));
+
+        // compute interpolated channel expressions and blend with existing pixels by opacity
+        const a1r = c1.r;
+        const a1g = c1.g;
+        const a1b = c1.b;
+        const a2r = c2.r;
+        const a2g = c2.g;
+        const a2b = c2.b;
+
+        // Use hypot(X-cx\,Y-cy) to compute distance -> need to escape commas for ffmpeg expression
+        const rExpr = `(${a1r}+(${a2r}-${a1r})*min(hypot(X-${cx}\\,Y-${cy})/${maxR}\\,1))`;
+        const gExpr = `(${a1g}+(${a2g}-${a1g})*min(hypot(X-${cx}\\,Y-${cy})/${maxR}\\,1))`;
+        const bExpr = `(${a1b}+(${a2b}-${a1b})*min(hypot(X-${cx}\\,Y-${cy})/${maxR}\\,1))`;
+
+        // Build geq expression that writes r,g,b while preserving original alpha and blending by opacity
+        filters.push(
+          `geq=` +
+          `r='if(between(X,${x},${x+w})*between(Y,${y},${y+h}),r(X,Y)*(1-${opacity})+(${rExpr})*${opacity},r(X,Y))':` +
+          `g='if(between(X,${x},${x+w})*between(Y,${y},${y+h}),g(X,Y)*(1-${opacity})+(${gExpr})*${opacity},g(X,Y))':` +
+          `b='if(between(X,${x},${x+w})*between(Y,${y},${y+h}),b(X,Y)*(1-${opacity})+(${bExpr})*${opacity},b(X,Y))':` +
+          `a='p(X,Y)':enable='${enableConditions}'`
+        );
       }
     } else {
       const fillColor = rgbToHex(styles.fillColor || '#ffffff');
@@ -151,7 +275,7 @@ export class VideoProcessor {
     }
     
     // Border
-    const borderWidth = styles.borderWidth || 0;
+    const borderWidth = Math.round((parseFloat(styles.borderWidth) || 0) * Math.min(scaleX, scaleY));
     if (borderWidth > 0) {
       const borderColor = rgbToHex(styles.borderColor || '#000000');
       if (borderColor) {
@@ -168,7 +292,29 @@ export class VideoProcessor {
     const filters: string[] = [];
     const rawText = data.text || 'Text';
     const lines = rawText.split('\n');
-    const fontSize = Math.round((styles.fontSize || 16) * Math.min(scaleX, scaleY));
+    const videoWidth = this.videoData.video_width;
+    const canvasWidth = (this.videoData as any).canvas_width || (this.videoData as any).canvasWidth || videoWidth;
+    const usePercentages = !!(this.videoData as any).use_percentages;
+
+    // Resolve font size:
+    // - If frontend provides a percentage string like '13.9%', interpret it as percent of the canvas width.
+    // - If frontend provided numbers but indicated use_percentages, treat that number as percent value (0-100).
+    // - Otherwise treat numeric font sizes as pixels authored on canvas and scale by scaleY.
+    let fontSize: number;
+    if (typeof styles.fontSize === 'string' && styles.fontSize.trim().endsWith('%')) {
+      const pct = parseFloat(styles.fontSize);
+      fontSize = Math.max(1, Math.round((pct / 100) * canvasWidth));
+    } else {
+      const raw = parseFloat(styles.fontSize as any);
+      if (!isNaN(raw) && usePercentages) {
+        // numeric percent value
+        fontSize = Math.max(1, Math.round((raw / 100) * canvasWidth));
+      } else {
+        const fallback = isNaN(raw) ? 16 : raw;
+        fontSize = Math.max(1, Math.round(fallback * scaleY));
+      }
+    }
+
     let fontColor = styles.fontColor || '#000000';
     
     // Handle gradient text
@@ -176,7 +322,7 @@ export class VideoProcessor {
       const color1 = styles.textGradientColor1 || '#ffffff';
       
       if (color1.startsWith('rgb')) {
-        const match = color1.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+        const match = color1.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
         if (match) {
           fontColor = `#${parseInt(match[1]).toString(16).padStart(2, '0')}${parseInt(match[2]).toString(16).padStart(2, '0')}${parseInt(match[3]).toString(16).padStart(2, '0')}`;
         }
@@ -186,7 +332,7 @@ export class VideoProcessor {
     }
     
     if (fontColor.startsWith('rgb')) {
-      const match = fontColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+      const match = fontColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
       if (match) {
         fontColor = `#${parseInt(match[1]).toString(16).padStart(2, '0')}${parseInt(match[2]).toString(16).padStart(2, '0')}${parseInt(match[3]).toString(16).padStart(2, '0')}`;
       }
@@ -199,7 +345,15 @@ export class VideoProcessor {
     const fontVariant = isBold && isItalic ? 'boldItalic' : isBold ? 'bold' : isItalic ? 'italic' : 'regular';
     const fontRelPath = FONT_CONFIG[fontFamily]?.[fontVariant] || FONT_CONFIG['Arial']['regular'];
     const fontFile = path.resolve(FONT_BASE_PATH, fontRelPath);
-    
+
+    // Log font resolution and existence
+    try {
+      const exists = fsSync.existsSync(fontFile);
+      console.log(`generateTextFilters(): font resolved for '${fontFamily}' variant='${fontVariant}' -> ${fontFile} exists=${exists}`);
+    } catch (err) {
+      console.log(`generateTextFilters(): error checking font file ${fontFile}: ${String(err)}`);
+    }
+
     const textAlign = styles.textAlign || 'left';
     const lineHeight = Math.round(fontSize * 1.2);
     const containerWidth = data.width;
@@ -212,40 +366,57 @@ export class VideoProcessor {
       const e = end.toFixed(3);
       return start === end ? `gte(t,${s})` : `between(t,${s},${e})`;
     }).join('+');
-    
+
+    console.log(`generateTextFilters(): x=${x} y=${y} container=${containerWidth}x${containerHeight} fontSize=${fontSize} enable='${enableConditions}'`);
+
     // Add background only if explicitly set and not transparent
     if (styles.fillType && styles.fillType !== 'none' && styles.fillColor && styles.fillColor !== 'transparent' && containerWidth && containerHeight) {
-      const bgFilters = this.generateShapeFilters(x, y, containerWidth, containerHeight, styles, windows);
+      const bgFilters = this.generateShapeFilters(x, y, containerWidth, containerHeight, styles, windows, scaleX, scaleY);
       filters.push(...bgFilters);
     }
     
     lines.forEach((line: string, index: number) => {
-      const text = line.replace(/'/g, "'").replace(/\\/g, '\\\\').replace(/:/g, '\\:').trim();
+      const text = line.replace(/'/g, "\\'").replace(/\\/g, '\\\\').replace(/:/g, '\\:').trim();
       if (!text) return;
       
       // Adjust y position to account for text baseline
-      const yPos = y + (index * lineHeight) + Math.round(fontSize * 0.8);
+      const yPos = y + (index * lineHeight);
       
       if (styles.hasShadow) {
-        const shadowOffsetX = Math.round((styles.shadowOffsetX || 2) * scaleX);
-        const shadowOffsetY = Math.round((styles.shadowOffsetY || 2) * scaleY);
-        const shadowColor = styles.shadowColor || '#000000';
-        
-        let shadowFilter = `drawtext=text='${text}':fontfile=${fontFile}:fontsize=${fontSize}:fontcolor=${shadowColor}80:box=0`;
-        
-        if (textAlign === 'center') {
-          shadowFilter += `:x=${x + containerWidth / 2 + shadowOffsetX}-text_w/2:y=${yPos + shadowOffsetY}`;
-        } else if (textAlign === 'right') {
-          shadowFilter += `:x=${x + containerWidth + shadowOffsetX}-text_w:y=${yPos + shadowOffsetY}`;
-        } else {
-          shadowFilter += `:x=${x + shadowOffsetX}:y=${yPos + shadowOffsetY}`;
+        const rawShadowColor = styles.shadowColor || '#000000';
+        const shadowOpacity = Math.max(0, Math.min(1, parseFloat(styles.shadowOpacity as any) || 0.6));
+        const shadowBlur = Math.max(0, Math.round(parseFloat(styles.shadowBlur as any) || 4));
+        const baseOffsetX = Math.round((parseFloat(styles.shadowOffsetX) || 2) * scaleX);
+        const baseOffsetY = Math.round((parseFloat(styles.shadowOffsetY) || 2) * scaleY);
+
+        // approximate blur by drawing several shadow passes around the base offset
+        const steps = Math.max(1, Math.min(8, Math.ceil(shadowBlur / 2)));
+        for (let i = 0; i < steps; i++) {
+          const spread = i; // pixels away from center
+          const alpha = Math.round(shadowOpacity * 255 * (1 - i / (steps + 1))).toString(16).padStart(2, '0');
+          const colorHex = (() => {
+            const c = this.parseColor(rawShadowColor) || { r: 0, g: 0, b: 0 };
+            return `#${c.r.toString(16).padStart(2,'0')}${c.g.toString(16).padStart(2,'0')}${c.b.toString(16).padStart(2,'0')}`;
+          })();
+
+          let sx = x + baseOffsetX + spread;
+          let sy = yPos + baseOffsetY + spread;
+          if (i % 2 === 1) { sx = x + baseOffsetX - spread; sy = yPos + baseOffsetY - spread; }
+
+          let shadowFilter = `drawtext=text='${text}':fontfile='${fontFile}':fontsize=${fontSize}:fontcolor=${colorHex}${alpha}:box=0`;
+          if (textAlign === 'center') {
+            shadowFilter += `:x=${sx + containerWidth / 2}-text_w/2:y=${sy}`;
+          } else if (textAlign === 'right') {
+            shadowFilter += `:x=${sx + containerWidth}-text_w:y=${sy}`;
+          } else {
+            shadowFilter += `:x=${sx}:y=${sy}`;
+          }
+          shadowFilter += `:enable='${enableConditions}'`;
+          filters.push(shadowFilter);
         }
-        
-        shadowFilter += `:enable='${enableConditions}'`;
-        filters.push(shadowFilter);
       }
       
-      let textFilter = `drawtext=text='${text}':fontfile=${fontFile}:fontsize=${fontSize}:fontcolor=${fontColor}:box=0`;
+      let textFilter = `drawtext=text='${text}':fontfile='${fontFile}':fontsize=${fontSize}:fontcolor=${fontColor}:box=0`;
       
       if (textAlign === 'center') {
         textFilter += `:x=${x + containerWidth / 2}-text_w/2:y=${yPos}`;
@@ -267,12 +438,12 @@ export class VideoProcessor {
     const startPoint = data.startPoint || { x: 0, y: 0 };
     const endPoint = data.endPoint || { x: 100, y: 0 };
     const color = (styles.borderColor || '#ffffff').replace('#', '0x');
-    const width = styles.borderWidth || 2;
+    const width = Math.round((parseFloat(styles.borderWidth) || 2) * Math.min(scaleX, scaleY));
     
-    const x1 = Math.round(startPoint.x * scaleX);
-    const y1 = Math.round(startPoint.y * scaleY);
-    const x2 = Math.round(endPoint.x * scaleX);
-    const y2 = Math.round(endPoint.y * scaleY);
+    const x1 = Math.round((parseFloat(startPoint.x) || 0) * scaleX);
+    const y1 = Math.round((parseFloat(startPoint.y) || 0) * scaleY);
+    const x2 = Math.round((parseFloat(endPoint.x) || 0) * scaleX);
+    const y2 = Math.round((parseFloat(endPoint.y) || 0) * scaleY);
     
     if (windows.length === 0) return filters;
     
@@ -281,10 +452,46 @@ export class VideoProcessor {
       const e = end.toFixed(3);
       return start === end ? `gte(t,${s})` : `between(t,${s},${e})`;
     }).join('+');
+
+    console.log(`generateLineFilters(): start=(${startPoint.x},${startPoint.y}) end=(${endPoint.x},${endPoint.y}) width=${width} enable='${enableConditions}'`);
     const lineFilter = `drawline=x1=${x1}:y1=${y1}:x2=${x2}:y2=${y2}:color=${color}:t=${width}:enable='${enableConditions}'`;
     filters.push(lineFilter);
     
     return filters;
+  }
+
+  private parseColor(color: string): { r: number, g: number, b: number } | null {
+    if (!color || color === 'transparent') return null;
+    
+    if (color.startsWith('rgb')) {
+      const match = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+      if (match) {
+        return {
+          r: parseInt(match[1]),
+          g: parseInt(match[2]),
+          b: parseInt(match[3])
+        };
+      }
+    }
+    
+    if (color.startsWith('#')) {
+      const hex = color.slice(1);
+      if (hex.length === 3) {
+        return {
+          r: parseInt(hex[0] + hex[0], 16),
+          g: parseInt(hex[1] + hex[1], 16),
+          b: parseInt(hex[2] + hex[2], 16)
+        };
+      }
+      if (hex.length === 6) {
+        return {
+          r: parseInt(hex.slice(0, 2), 16),
+          g: parseInt(hex.slice(2, 4), 16),
+          b: parseInt(hex.slice(4, 6), 16)
+        };
+      }
+    }
+    return { r: 0, g: 0, b: 0 };
   }
 
   async process(): Promise<{ success: boolean; result: string }> {
@@ -335,34 +542,51 @@ export class VideoProcessor {
     }
     
     return new Promise((resolve) => {
+      const fullCmd = `ffmpeg ${args.map(a => a.includes(' ') ? `'${a}'` : a).join(' ')} -progress pipe:1`;
+      console.log('Running ffmpeg:', fullCmd);
+
       const ffmpeg = spawn('ffmpeg', [...args, '-progress', 'pipe:1']);
+      console.log('Spawned ffmpeg pid=', ffmpeg.pid);
       let stderr = '';
+      let lastProgressWrite = 0;
       
       ffmpeg.stdout.on('data', (data) => {
-        const lines = data.toString().split('\n').filter(l => l.trim());
-        const timeMatch = lines.find(l => l.startsWith('out_time_ms='));
+        const str = data.toString();
+        // also print progress lines for debugging
+        console.log('[ffmpeg stdout]', str.trim());
+        const lines = str.split('\n').filter((l: string) => l.trim());
+        const timeMatch = lines.find((l: string) => l.startsWith('out_time_ms='));
         if (timeMatch) {
-          fs.writeFile(progressPath, timeMatch).catch(() => {});
+          const now = Date.now();
+          if (now - lastProgressWrite > 200) {
+            fs.writeFile(progressPath, timeMatch).catch(() => {});
+            lastProgressWrite = now;
+          }
         }
       });
       
       ffmpeg.stderr.on('data', (data) => {
-        stderr += data.toString();
+        const s = data.toString();
+        stderr += s;
+        // realtime stderr log
+        console.log('[ffmpeg stderr]', s.trim());
       });
       
       ffmpeg.on('close', (code) => {
         fs.unlink(progressPath).catch(() => {});
+        console.log('ffmpeg exited with code=', code);
         if (code === 0) {
           resolve({ success: true, result: this.outputPath });
         } else {
           console.error('FFmpeg failed with code:', code);
-          console.error('FFmpeg stderr:', stderr);
+          console.error('FFmpeg stderr (collected):', stderr);
           resolve({ success: false, result: `FFmpeg error: ${stderr}` });
         }
       });
       
       ffmpeg.on('error', (err) => {
         fs.unlink(progressPath).catch(() => {});
+        console.error('ffmpeg process error:', err);
         resolve({ success: false, result: `Process error: ${err.message}` });
       });
     });

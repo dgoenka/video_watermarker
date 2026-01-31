@@ -206,10 +206,13 @@ const createStore = () => create((set, get) => ({
             nodes: get().nodes.map((node) => {
                 if (node.id === nodeId) {
                     const timestamps = node.data.timestamps || [];
+                    const isVisible = (timestamps.filter(t => t <= currentTime).length % 2) !== 0;
                     let newTimestamps = timestamps.filter(t => t < currentTime);
-                    if (!timestamps.includes(currentTime)) {
+                    
+                    if (!isVisible) {
                         newTimestamps.push(currentTime);
                     }
+                    
                     newTimestamps.sort((a, b) => a - b);
                     return { ...node, data: { ...node.data, timestamps: newTimestamps } };
                 }

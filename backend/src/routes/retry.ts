@@ -1,8 +1,8 @@
 import { FastifyInstance } from 'fastify';
 import { promises as fs } from 'fs';
-import path from 'path';
 import { getJob, updateJobStatus, JobStatus } from '../db';
 import { videoQueue } from '../queue';
+import { getVideoPath } from '../storage';
 
 export async function retryRoute(fastify: FastifyInstance) {
   fastify.post('/api/retry/:jobId', async (request, reply) => {
@@ -22,18 +22,19 @@ export async function retryRoute(fastify: FastifyInstance) {
     // Reset job status
     await updateJobStatus(jobId, JobStatus.PENDING);
     
-    // Check if original video exists
-    const uploadPath = path.join('uploads', `${jobId}_retry.mp4`);
     try {
-      await fs.access(uploadPath);
-      await videoQueue.add('process', { jobId, videoPath: uploadPath });
-      
+      // Use storage helper to locate the original uploaded video inside configured outputDir
+      const originalVideoPath = await getVideoPath(jobId);
+      await fs.access(originalVideoPath);
+      await videoQueue.add('process', { jobId, videoPath: originalVideoPath });
+
       return {
         job_id: jobId,
         status: 'pending',
         message: 'Job retry initiated',
       };
-    } catch {
+    } catch (err) {
+      // If we couldn't find the original video, ask the user to re-upload
       return reply.code(400).send({
         error: 'Original video file not found. Please re-upload.',
       });
