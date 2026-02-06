@@ -28,6 +28,9 @@ export const backendApi = {
     console.log(`Video natural size: ${videoDimensions.width}x${videoDimensions.height}`);
     console.log(`Nodes count: ${nodes.length}`);
 
+    // Collect image files to append as separate multipart parts (field name 'images')
+    const imageFiles = [];
+
     const nodesWithPercentages = nodes.map(node => {
       const posXPercent = (node.position.x / actualCanvasWidth) * 100;
       const posYPercent = (node.position.y / actualCanvasHeight) * 100;
@@ -37,6 +40,57 @@ export const backendApi = {
       const fontSizePercent = node.data.styles?.fontSize
         ? (parseFloat(node.data.styles.fontSize) / actualCanvasWidth) * 100
         : undefined;
+
+      // If node contains a File object under data.file or data.imageFile, collect it for upload
+      const nodeData = { ...node.data };
+      if (nodeData.file && nodeData.file instanceof File) {
+        imageFiles.push({ file: nodeData.file, filename: nodeData.file.name, nodeId: node.id });
+        // Replace the src with just the filename so backend can map it to saved path
+        nodeData.src = nodeData.file.name;
+        // Include natural dimensions if available on the File object (some image pickers set it)
+        if (nodeData.naturalWidth) nodeData.naturalWidth = nodeData.naturalWidth;
+        if (nodeData.naturalHeight) nodeData.naturalHeight = nodeData.naturalHeight;
+        // Remove the heavy file reference from JSON
+        delete nodeData.file;
+      } else if (nodeData.imageFile && nodeData.imageFile instanceof File) {
+        imageFiles.push({ file: nodeData.imageFile, filename: nodeData.imageFile.name, nodeId: node.id });
+        nodeData.src = nodeData.imageFile.name;
+        if (nodeData.naturalWidth) nodeData.naturalWidth = nodeData.naturalWidth;
+        if (nodeData.naturalHeight) nodeData.naturalHeight = nodeData.naturalHeight;
+        delete nodeData.imageFile;
+      }
+
+      // If the DOM element for this node has an <img> with natural sizes, include them
+      try {
+        const nodeWrapper = document.querySelector(`[data-node-id="${node.id}"]`);
+        if (nodeWrapper) {
+          const imgEl = nodeWrapper.querySelector('img');
+          if (imgEl && imgEl.naturalWidth && imgEl.naturalHeight) {
+            nodeData.naturalWidth = imgEl.naturalWidth;
+            nodeData.naturalHeight = imgEl.naturalHeight;
+          }
+
+          // If this is a text node, measure the inner editable element's offset inside the wrapper
+          if (node.type === 'text') {
+            const textEl = nodeWrapper.querySelector('[contenteditable]');
+            if (textEl) {
+              const wrapperRect = nodeWrapper.getBoundingClientRect();
+              const textRect = textEl.getBoundingClientRect();
+              const baselineApprox = (parseFloat(window.getComputedStyle(textEl).fontSize) || 16) * 0.8;
+              // offset from top of wrapper to baseline (px)
+              const offsetTopPx = Math.max(0, textRect.top - wrapperRect.top);
+              const baselineOffsetPx = offsetTopPx + baselineApprox;
+              // send as percent of the canvas height so backend can scale
+              nodeData.textBaselineOffsetPercent = (baselineOffsetPx / actualCanvasHeight) * 100;
+              // Also include measured inner content size if helpful
+              nodeData.contentWidth = textRect.width;
+              nodeData.contentHeight = textRect.height;
+            }
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
 
       console.log(`Node ${node.type}: pos=(${node.position.x.toFixed(1)}, ${node.position.y.toFixed(1)}) -> (${posXPercent.toFixed(2)}%, ${posYPercent.toFixed(2)}%)`);
       console.log(`Node ${node.type}: size=(${node.width.toFixed(1)}, ${node.height.toFixed(1)}) -> (${widthPercent.toFixed(2)}%, ${heightPercent.toFixed(2)}%)`);
@@ -50,7 +104,7 @@ export const backendApi = {
         width: widthPercent,
         height: heightPercent,
         data: {
-          ...node.data,
+          ...nodeData,
           styles: node.data.styles ? {
             ...node.data.styles,
             fontSize: fontSizePercent ? `${fontSizePercent}%` : undefined,
@@ -75,6 +129,12 @@ export const backendApi = {
     console.log('Upload data:', JSON.stringify(uploadData, null, 2).substring(0, 2000));
     
     formData.append('video', videoFile);
+
+    // Append any collected image files as separate 'images' parts
+    for (const img of imageFiles) {
+      formData.append('images', img.file, img.filename);
+    }
+
     formData.append('data', JSON.stringify(uploadData));
 
     const response = await axios.post(`${API_URL}/api/upload`, formData, {

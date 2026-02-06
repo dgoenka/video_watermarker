@@ -8,17 +8,18 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "db:migrate": "tsx src/db/migrate.ts",
-    "render-overlay": "node tests/overlay_renderer.js"
+    "render-overlay": "node dev-tools/overlay_renderer.js"
   },
   "dependencies": {
     "@fastify/cors": "^8.4.2",
     "@fastify/multipart": "^8.0.0",
-    "fastify": "^4.25.1",
-    "pg": "^8.11.3",
-    "dotenv": "^16.3.1",
-    "uuid": "^9.0.1",
     "bullmq": "^5.1.5",
-    "ioredis": "^5.3.2"
+    "dotenv": "^16.3.1",
+    "fastify": "^4.25.1",
+    "ioredis": "^5.3.2",
+    "pg": "^8.11.3",
+    "sharp": "^0.32.6",
+    "uuid": "^9.0.1"
   },
   "devDependencies": {
     "@types/node": "^20.10.5",
@@ -28,6 +29,6 @@
     "typescript": "^5.3.3"
   },
   "optionalDependencies": {
-    "canvas": "^2.11.0"
+    "canvas": "^2.11.2"
   }
 }

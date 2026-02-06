@@ -2,6 +2,7 @@ import { spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import * as fsSync from 'fs';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 
 // Try to import 'canvas' (native module) but tolerate it not being installed
 let createCanvas: any = null;
@@ -18,6 +19,15 @@ try {
   console.log('processor: optional dependency "canvas" not available; using fallback text metrics');
   createCanvas = null;
   registerFont = null;
+}
+
+// Try to import sharp for higher-quality resampling in async paths
+let sharpLib: any = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  sharpLib = require('sharp');
+} catch (err) {
+  sharpLib = null;
 }
 
 const FONT_CONFIG = require('../../font-config.json');
@@ -39,9 +49,12 @@ interface VideoData {
   video_duration: number;
   canvas_width?: number;
   canvas_height?: number;
+  // optional device pixel ratio hint from frontend
+  dpr?: number;
 }
 
 import { config } from './config';
+import { setJobTime, clearJobTime } from './progressStore';
 
 export class VideoProcessor {
   constructor(
@@ -63,7 +76,10 @@ export class VideoProcessor {
     fontFile: string,
     containerW: number,
     containerH: number,
-    styles: any
+    styles: any,
+    scaleX: number,
+    scaleY: number,
+    dpr: number
   ): string | null {
     if (!createCanvas) return null;
     try {
@@ -99,12 +115,15 @@ export class VideoProcessor {
       else if (styles.textAlign === 'right') ctx.textAlign = 'right';
       else ctx.textAlign = 'left';
 
-      // Shadow
+      // Shadow - scale blur and offset by scaleX/scaleY and dpr so canvas rendering matches video pixels
       if (styles.hasShadow) {
         ctx.shadowColor = styles.shadowColor || '#000000';
-        ctx.shadowBlur = parseFloat(styles.shadowBlur as any) || 4;
-        ctx.shadowOffsetX = parseFloat(styles.shadowOffsetX as any) || 2;
-        ctx.shadowOffsetY = parseFloat(styles.shadowOffsetY as any) || 2;
+        const rawBlur = parseFloat(styles.shadowBlur as any) || 4;
+        const rawOffsetX = parseFloat(styles.shadowOffsetX as any) || 2;
+        const rawOffsetY = parseFloat(styles.shadowOffsetY as any) || 2;
+        ctx.shadowBlur = rawBlur * Math.max(scaleX, scaleY) * (dpr || 1);
+        ctx.shadowOffsetX = rawOffsetX * scaleX * (dpr || 1);
+        ctx.shadowOffsetY = rawOffsetY * scaleY * (dpr || 1);
       } else {
         ctx.shadowColor = 'rgba(0,0,0,0)';
         ctx.shadowBlur = 0;
@@ -134,6 +153,191 @@ export class VideoProcessor {
       return outPath;
     } catch (e) {
       console.log('createTextOverlay failed:', String(e));
+      return null;
+    }
+  }
+
+  // Render an image component to a PNG overlay. `src` may be a data URL or a file path/URL.
+  private async createImageOverlay(id: string, src: string, containerW: number, containerH: number): Promise<string | null> {
+    try {
+      const outDir = path.join(config.outputDir, this.jobId, 'overlays');
+      if (!fsSync.existsSync(outDir)) fsSync.mkdirSync(outDir, { recursive: true });
+      const outPath = path.join(outDir, `${id}.png`);
+
+      // If src is a data URL, decode and write directly (may not be scaled)
+      if (/^data:\w+\/[a-zA-Z\-+.]+;base64,/.test(src)) {
+        const base64 = src.split(',')[1] || '';
+        const buf = Buffer.from(base64, 'base64');
+        // If we have canvas, load and scale; otherwise write raw buffer or use sharp if available
+        if (createCanvas) {
+          try {
+            // lazy require loadImage
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { loadImage } = require('canvas');
+            const img = await loadImage(buf);
+            const canvas = createCanvas(Math.max(1, containerW), Math.max(1, containerH));
+            const ctx = canvas.getContext('2d');
+            // clear
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            // draw scaled to container
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            const outBuf = canvas.toBuffer('image/png');
+            fsSync.writeFileSync(outPath, outBuf);
+            return outPath;
+          } catch (e) {
+            // fallback: try sharp (if available) to resample and write PNG
+            if (sharpLib) {
+              try {
+                const res = await sharpLib(buf).resize(Math.max(1, containerW), Math.max(1, containerH), { fit: 'fill' }).png().toBuffer();
+                fsSync.writeFileSync(outPath, res);
+                return outPath;
+              } catch (ee) {
+                // fallback: write raw buffer
+                fsSync.writeFileSync(outPath, buf);
+                return outPath;
+              }
+            }
+            fsSync.writeFileSync(outPath, buf);
+            return outPath;
+          }
+        } else if (sharpLib) {
+          try {
+            const res = await sharpLib(buf).resize(Math.max(1, containerW), Math.max(1, containerH), { fit: 'fill' }).png().toBuffer();
+            fsSync.writeFileSync(outPath, res);
+            return outPath;
+          } catch (e) {
+            fsSync.writeFileSync(outPath, buf);
+            return outPath;
+          }
+        } else {
+          fsSync.writeFileSync(outPath, buf);
+          return outPath;
+        }
+      }
+
+      // If src is a filesystem path or URL, try to load & scale with canvas when available
+      if (createCanvas) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const { loadImage } = require('canvas');
+          const img = await loadImage(src);
+          const canvas = createCanvas(Math.max(1, containerW), Math.max(1, containerH));
+          const ctx = canvas.getContext('2d');
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          const outBuf = canvas.toBuffer('image/png');
+          fsSync.writeFileSync(outPath, outBuf);
+          return outPath;
+        } catch (e) {
+          // If loading failed, attempt to use sharp (async) to fetch/resize remote or local paths
+          if (sharpLib) {
+            try {
+              await sharpLib(src).resize(Math.max(1, containerW), Math.max(1, containerH), { fit: 'fill' }).png().toFile(outPath);
+              return outPath;
+            } catch (ee) {
+              // If loading failed, attempt to copy file if path exists
+              try {
+                if (fsSync.existsSync(src)) {
+                  fsSync.copyFileSync(src, outPath);
+                  return outPath;
+                }
+              } catch (eee) {
+                console.log('createImageOverlay fallback copy failed:', String(eee));
+              }
+            }
+          } else {
+            try {
+              if (fsSync.existsSync(src)) {
+                fsSync.copyFileSync(src, outPath);
+                return outPath;
+              }
+            } catch (ee) {
+              console.log('createImageOverlay fallback copy failed:', String(ee));
+            }
+          }
+        }
+      } else {
+        // No canvas: prefer sharp (async) if available, otherwise try to copy local files.
+        if (sharpLib) {
+          try {
+            await sharpLib(src).resize(Math.max(1, containerW), Math.max(1, containerH), { fit: 'fill' }).png().toFile(outPath);
+            return outPath;
+          } catch (e) {
+            // fallback to copy
+            try {
+              if (fsSync.existsSync(src)) {
+                fsSync.copyFileSync(src, outPath);
+                return outPath;
+              }
+            } catch (ee) {
+              console.log('createImageOverlay no-canvas copy failed:', String(ee));
+            }
+          }
+        } else {
+          try {
+            if (fsSync.existsSync(src)) {
+              fsSync.copyFileSync(src, outPath);
+              return outPath;
+            }
+          } catch (e) {
+            console.log('createImageOverlay no-canvas copy failed:', String(e));
+          }
+        }
+      }
+
+      return null;
+    } catch (err) {
+      console.log('createImageOverlay error:', String(err));
+      return null;
+    }
+  }
+
+  // Synchronous image overlay creation for use during filter generation.
+  // Supports data URLs and local file paths. If node-canvas is available we don't use it here
+  // (async) to keep generateFilters sync — we simply decode/copy synchronously.
+  private createImageOverlaySync(id: string, src: string, containerW: number, containerH: number): string | null {
+    try {
+      const outDir = path.join(config.outputDir, this.jobId, 'overlays');
+      if (!fsSync.existsSync(outDir)) fsSync.mkdirSync(outDir, { recursive: true });
+      const outPath = path.join(outDir, `${id}.png`);
+
+      // Data URL
+      const m = src && src.match(/^data:(\w+\/[\w+\-.]+);base64,(.+)$/);
+      if (m) {
+        const base64 = m[2];
+        const buf = Buffer.from(base64, 'base64');
+        fsSync.writeFileSync(outPath, buf);
+        console.log(`createImageOverlaySync: wrote overlay (data URL) -> ${outPath}`);
+        return outPath;
+      }
+
+      // Local file path
+      if (fsSync.existsSync(src)) {
+        // If container size differs, prefer to scale synchronously using ffmpeg (if available) to avoid async APIs
+        if (containerW > 0 && containerH > 0) {
+          try {
+            // Attempt to invoke ffmpeg to scale image synchronously. This avoids introducing a new async dependency in the sync codepath.
+            const args = ['-y', '-i', src, '-vf', `scale=${containerW}:${containerH}`, outPath];
+            const res = spawnSync('ffmpeg', args, { encoding: 'utf-8' });
+            if (res.status === 0) {
+              console.log(`createImageOverlaySync: scaled ${src} -> ${outPath} using ffmpeg`);
+              return outPath;
+            }
+          } catch (e) {
+            // fallthrough to copy
+            console.log('createImageOverlaySync: ffmpeg scaling failed, copying file instead:', String(e));
+          }
+        }
+
+        fsSync.copyFileSync(src, outPath);
+        console.log(`createImageOverlaySync: copied local file -> ${outPath}`);
+        return outPath;
+      }
+
+      console.log(`createImageOverlaySync: source not found or unsupported: ${src}`);
+      return null;
+    } catch (err) {
+      console.log('createImageOverlaySync error:', String(err));
       return null;
     }
   }
@@ -176,8 +380,11 @@ export class VideoProcessor {
     const scaleX = videoNodeWidth === videoWidth ? 1 : videoWidth / videoNodeWidth;
     const scaleY = videoNodeHeight === videoHeight ? 1 : videoHeight / videoNodeHeight;
 
-    console.log(`Canvas ${canvasWidth}x${canvasHeight} -> Video ${videoWidth}x${videoHeight}, scale=(${scaleX.toFixed(3)}, ${scaleY.toFixed(3)})`);
-    
+    // device pixel ratio hint (optional) used to scale blur approximation
+    const dpr = (this.videoData as any).dpr || 1;
+
+    console.log(`Canvas ${canvasWidth}x${canvasHeight} -> Video ${videoWidth}x${videoHeight}, scale=(${scaleX.toFixed(3)}, ${scaleY.toFixed(3)}) dpr=${dpr}`);
+
     // Sort nodes by zIndex if available
     const sortedNodes = [...this.videoData.nodes].sort((a, b) => {
       const zA = (a.data as any).zIndex || 0;
@@ -244,11 +451,27 @@ export class VideoProcessor {
       h = toPxY(height);
 
       if (type === 'rectangle' || type === 'circle') {
-        filters.push(...this.generateShapeFilters(x, y, w, h, styles, windows, scaleX, scaleY));
+        filters.push(...this.generateShapeFilters(x, y, w, h, styles, windows, scaleX, scaleY, dpr));
       } else if (type === 'text') {
-        filters.push(...this.generateTextFilters(x, y, { ...data, width: w, height: h }, styles, windows, scaleX, scaleY));
+        filters.push(...this.generateTextFilters(x, y, { ...data, width: w, height: h }, styles, windows, scaleX, scaleY, dpr));
       } else if (type === 'line') {
         filters.push(...this.generateLineFilters(data, styles, windows, scaleX, scaleY));
+      } else if (type === 'image' || type === 'picture') {
+        // Try to create an overlay PNG synchronously (supports data URLs and local files).
+        try {
+          const src = data.src || data.image || '';
+          const overlayPath = this.createImageOverlaySync(data.id || component.id, src, w, h);
+          if (overlayPath) {
+            const enable = windows.map(([s,e]) => (s===e ? `gte(t,${s.toFixed(3)})` : `between(t,${s.toFixed(3)},${e.toFixed(3)})`)).join('+');
+            this.overlays.push({ file: overlayPath, x: Math.round(x), y: Math.round(y), enable });
+          } else {
+            // fallback to filter-based image handling
+            filters.push(...this.generateImageFilters(x, y, w, h, data, styles, windows, scaleX, scaleY));
+          }
+        } catch (e) {
+          console.log('image overlay creation failed, falling back to filters:', String(e));
+          filters.push(...this.generateImageFilters(x, y, w, h, data, styles, windows, scaleX, scaleY));
+        }
       }
     }
 
@@ -261,7 +484,7 @@ export class VideoProcessor {
 
   private generateShapeFilters(
     x: number, y: number, w: number, h: number,
-    styles: any, windows: [number, number][], scaleX: number, scaleY: number
+    styles: any, windows: [number, number][], scaleX: number, scaleY: number, dpr: number
   ): string[] {
     const filters: string[] = [];
     
@@ -276,6 +499,7 @@ export class VideoProcessor {
     }).join('+');
     
     const rgbToHex = (color: string) => {
+      if (!color) return null;
       if (color.startsWith('rgb')) {
         const match = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
         if (match) {
@@ -300,19 +524,20 @@ export class VideoProcessor {
         const offsetY = Math.round((parseFloat(styles.shadowOffsetY) || 0) * scaleY);
         const baseX = x + offsetX;
         const baseY = y + offsetY;
-        const shadowBlur = Math.min(12, Math.max(0, Math.round(parseFloat(styles.shadowBlur as any) || 4)));
-        const steps = Math.max(1, Math.min(6, Math.ceil(shadowBlur / 2)));
+        const shadowBlur = Math.min(40, Math.max(0, Math.round(parseFloat(styles.shadowBlur as any) || 4)));
+        // clamp steps to reasonable number and scale with dpr
+        const steps = Math.max(1, Math.min(4, Math.ceil((shadowBlur * dpr) / 4)));
         const baseOpacity = Math.max(0, Math.min(1, parseFloat(styles.shadowOpacity as any) || 0.5));
 
         for (let i = 0; i < steps; i++) {
-          // expand box by i pixels (scaled) to approximate blur spread
-          const expand = i; // pixels
-          const sx = baseX - expand;
-          const sy = baseY - expand;
-          const sw = w + expand * 2;
-          const sh = h + expand * 2;
-          const alpha = Math.round(baseOpacity * 255 * (1 - i / (steps + 1)));
-          const alphaHex = alpha.toString(16).padStart(2, '0');
+          // expand box by i * spread to approximate blur spread (scaled by dpr)
+          const spread = Math.round((i + 1) * Math.max(1, Math.round((shadowBlur / Math.max(1, steps)) * dpr)));
+          const sx = baseX - spread;
+          const sy = baseY - spread;
+          const sw = w + spread * 2;
+          const sh = h + spread * 2;
+          const alphaVal = Math.max(0, Math.min(1, baseOpacity * (1 - i / (steps + 1))));
+          const alphaHex = Math.round(alphaVal * 255).toString(16).padStart(2, '0');
           filters.push(`drawbox=x=${sx}:y=${sy}:w=${sw}:h=${sh}:color=${shadowColorHex}${alphaHex}:t=fill:enable='${enableConditions}'`);
         }
       }
@@ -391,7 +616,7 @@ export class VideoProcessor {
   }
 
   private generateTextFilters(
-    x: number, y: number, data: any, styles: any, windows: [number, number][], scaleX: number, scaleY: number
+    x: number, y: number, data: any, styles: any, windows: [number, number][], scaleX: number, scaleY: number, dpr: number
   ): string[] {
     const filters: string[] = [];
     const rawText = data.text || 'Text';
@@ -526,7 +751,20 @@ export class VideoProcessor {
     const lineHeight = Math.round(fontSize * 1.2);
     const containerWidth = data.width;
     const containerHeight = data.height;
-    
+    // If frontend provided a measured inner content width (DOM pixels), prefer that for wrapping
+    // Convert it to video pixels using scaleX (contentWidth is measured on the DOM/video node width)
+    let wrapWidth = containerWidth;
+    if (typeof data.contentWidth === 'number' && !isNaN(data.contentWidth)) {
+      try {
+        const cwVideo = Math.max(1, Math.round(data.contentWidth * scaleX));
+        // clamp to container width so we don't overflow
+        wrapWidth = Math.min(containerWidth || cwVideo, cwVideo);
+      } catch (e) {
+        // ignore and fall back to containerWidth
+        wrapWidth = containerWidth;
+      }
+    }
+
     if (windows.length === 0) return filters;
     
     const enableConditions = windows.map(([start, end]) => {
@@ -539,7 +777,7 @@ export class VideoProcessor {
 
     // Add background only if explicitly set and not transparent
     if (styles.fillType && styles.fillType !== 'none' && styles.fillColor && styles.fillColor !== 'transparent' && containerWidth && containerHeight) {
-      const bgFilters = this.generateShapeFilters(x, y, containerWidth, containerHeight, styles, windows, scaleX, scaleY);
+      const bgFilters = this.generateShapeFilters(x, y, containerWidth, containerHeight, styles, windows, scaleX, scaleY, dpr);
       filters.push(...bgFilters);
     }
     
@@ -571,10 +809,10 @@ export class VideoProcessor {
     }
 
     // Now that fontSize and canvas context are ready, perform wrapping of paragraphs into `lines` if a container width exists
-    if (containerWidth && containerWidth > 0) {
+    if (wrapWidth && wrapWidth > 0) {
       try {
         for (const para of paragraphs) {
-          const wrapped = wrapParagraph(para.trim(), containerWidth, canvasCtx, fontSpec);
+          const wrapped = wrapParagraph(para.trim(), wrapWidth, canvasCtx, fontSpec);
           if (wrapped.length === 0) lines.push(''); else lines.push(...wrapped);
         }
       } catch (e) {
@@ -592,13 +830,46 @@ export class VideoProcessor {
     // If we have node-canvas available, render the entire text block into one PNG overlay and add to overlays array.
     if (createCanvas) {
       try {
-        // create overlay PNG for the whole block
-        const overlayFile = this.createTextOverlay(data.id || `text_${Date.now()}`, lines, fontSpec, fontFamilyForCanvas, fontFile, containerWidth || 0, containerHeight || 0, styles);
+        // measure ascent for first line so we can position overlay correctly
+        let measuredAscent = Math.round(fontSize * 0.8);
+        try {
+          if (canvasCtx) {
+            const metrics = canvasCtx.measureText(lines[0] || 'Mg');
+            if (metrics) {
+              if (typeof metrics.actualBoundingBoxAscent === 'number') measuredAscent = Math.round(metrics.actualBoundingBoxAscent);
+              else if (typeof metrics.fontBoundingBoxAscent === 'number') measuredAscent = Math.round(metrics.fontBoundingBoxAscent);
+            }
+          }
+        } catch (e) {
+          measuredAscent = Math.round(fontSize * 0.8);
+        }
+
+        // Compute topMost (top y) using same logic as drawtext fallback so overlay aligns with expected coordinate system
+        const totalHeight = lines.length * lineHeight;
+        let topMost = (typeof containerHeight === 'number' && containerHeight > 0) ? y : y;
+        if (typeof containerHeight === 'number' && containerHeight > 0) {
+          if ( (this.videoData as any).ffmpeg_text_y_mode === 'middle') {
+            topMost = y + Math.round((containerHeight - totalHeight) / 2);
+          } else if ((this.videoData as any).ffmpeg_text_y_mode === 'top') {
+            topMost = y;
+          } else if ((this.videoData as any).ffmpeg_text_y_mode === 'baseline') {
+            topMost = y - measuredAscent;
+          } else {
+            topMost = y;
+          }
+        } else {
+          if ((this.videoData as any).ffmpeg_text_y_mode === 'baseline') topMost = y - measuredAscent; else topMost = y;
+        }
+
+        // When creating an overlay, prefer to size the canvas to the wrapWidth (content) so text doesn't wrap unexpectedly.
+        const overlayW = wrapWidth || containerWidth || 0;
+        const overlayH = containerHeight || (lines.length * lineHeight) || Math.max(lineHeight, fontSize);
+        const overlayFile = this.createTextOverlay(data.id || `text_${Date.now()}`, lines, fontSpec, fontFamilyForCanvas, fontFile, overlayW, overlayH, styles, scaleX, scaleY, dpr);
         if (overlayFile) {
-          // overlay x,y in video pixels; enable conditions as earlier
+          // overlay x,y in video pixels; use computed topMost for y
           const enable = enableConditions;
           const ox = Math.round(x);
-          const oy = Math.round(y);
+          const oy = Math.round(topMost);
           this.overlays.push({ file: overlayFile, x: ox, y: oy, enable });
           // we don't emit drawtext filters for this component because we're overlaying an image instead
           return filters;
@@ -659,17 +930,23 @@ export class VideoProcessor {
       // Compute total block height and a top-of-block (topMost) so we can align 'top' and 'middle' precisely
       const totalHeight = lines.length * lineHeight;
       let topMost = (typeof containerHeight === 'number' && containerHeight > 0) ? y : y; // default top
+
+      // Interpret yMode more explicitly:
+      // - 'top' -> y is top of container
+      // - 'middle' -> y is top of container, but center text vertically inside container
+      // - 'baseline' -> y is baseline coordinate for the first line (so topMost = y - ascent)
       if (typeof containerHeight === 'number' && containerHeight > 0) {
         if (yMode === 'middle') {
           topMost = y + Math.round((containerHeight - totalHeight) / 2);
         } else if (yMode === 'top') {
           topMost = y; // align to top
+        } else if (yMode === 'baseline') {
+          topMost = y - ascent;
         } else {
-          // baseline mode: assume y is top of container; keep topMost = y
           topMost = y;
         }
       } else {
-        topMost = y;
+        if (yMode === 'baseline') topMost = y - ascent; else topMost = y;
       }
 
       let yPos: number;
@@ -691,20 +968,22 @@ export class VideoProcessor {
         const baseOffsetX = Math.round((parseFloat(styles.shadowOffsetX) || 2) * scaleX);
         const baseOffsetY = Math.round((parseFloat(styles.shadowOffsetY) || 2) * scaleY);
 
-        const steps = Math.max(1, Math.min(8, Math.ceil(shadowBlur / 2)));
+        // clamp steps and scale by dpr
+        const steps = Math.max(1, Math.min(4, Math.ceil((shadowBlur * dpr) / 4)));
         for (let i = 0; i < steps; i++) {
-          const spread = i; // pixels away from center
-          const alpha = Math.round(shadowOpacity * 255 * (1 - i / (steps + 1))).toString(16).padStart(2, '0');
-          const colorHex = (() => {
-            const c = this.parseColor(rawShadowColor) || { r: 0, g: 0, b: 0 };
-            return `#${c.r.toString(16).padStart(2,'0')}${c.g.toString(16).padStart(2,'0')}${c.b.toString(16).padStart(2,'0')}`;
-          })();
+          const spread = Math.round((i + 1) * Math.max(1, Math.round((shadowBlur / Math.max(1, steps)) * dpr)));
+          const stepAlpha = shadowOpacity * (1 - i / (steps + 1));
 
-          let sx = x + baseOffsetX + spread;
-          let sy = yPos + baseOffsetY + spread;
-          if (i % 2 === 1) { sx = x + baseOffsetX - spread; sy = yPos + baseOffsetY - spread; }
+          const c = this.parseColor(rawShadowColor) || { r: 0, g: 0, b: 0 };
+          const colorHash = `#${c.r.toString(16).padStart(2,'0')}${c.g.toString(16).padStart(2,'0')}${c.b.toString(16).padStart(2,'0')}`;
 
-          let shadowFilter = `drawtext=text='${text}':fontfile='${fontFile}':fontsize=${fontSize}:fontcolor=${colorHex}${alpha}:box=0`;
+          let sx = x + baseOffsetX + (i % 2 === 0 ? spread : -spread);
+          let sy = yPos + baseOffsetY + (i % 2 === 0 ? spread : -spread);
+
+          // Use drawtext fontcolor with @alpha as decimal because it's more consistent across ffmpeg builds
+          const alphaDecimal = Math.max(0, Math.min(1, stepAlpha));
+
+          let shadowFilter = `drawtext=text='${text}':fontfile='${fontFile}':fontsize=${fontSize}:fontcolor=${colorHash}@${alphaDecimal.toFixed(3)}:box=0`;
           if (textAlign === 'center') {
             shadowFilter += `:x=${sx + containerWidth / 2}-text_w/2:y=${sy}`;
           } else if (textAlign === 'right') {
@@ -761,6 +1040,36 @@ export class VideoProcessor {
     return filters;
   }
 
+  private generateImageFilters(
+    x: number, y: number, w: number, h: number,
+    data: any, styles: any, windows: [number, number][], scaleX: number, scaleY: number
+  ): string[] {
+    const filters: string[] = [];
+    const { src } = data;
+
+    if (!src) return filters;
+
+    const enableConditions = windows.map(([start, end]) => {
+      const s = start.toFixed(3);
+      const e = end.toFixed(3);
+      return start === end ? `gte(t,${s})` : `between(t,${s},${e})`;
+    }).join('+');
+
+    // If we have an overlay PNG (from createImageOverlay), use it directly
+    const overlayFile = path.join(config.outputDir, this.jobId, 'overlays', `${data.id}.png`);
+    if (fsSync.existsSync(overlayFile)) {
+      console.log(`generateImageFilters: using overlay file ${overlayFile}`);
+      filters.push(`movie=${overlayFile}, scale=${w}:${h}, blend=all_mode='overlay':all_opacity=1:enable='${enableConditions}'`);
+    } else {
+      console.log(`generateImageFilters: overlay missing for ${data.id}, falling back to image2/drawbox. src=${src}`);
+      // Fallback: use a drawbox with image source (FFmpeg 4.0+)
+      filters.push(`drawbox=x=${x}:y=${y}:w=${w}:h=${h}:color=black@0:enable='${enableConditions}',` +
+                   `image2=${src}:scale=${w}:${h}:enable='${enableConditions}'`);
+    }
+
+    return filters;
+  }
+
   private parseColor(color: string): { r: number, g: number, b: number } | null {
     if (!color || color === 'transparent') return null;
 
@@ -803,12 +1112,58 @@ export class VideoProcessor {
       const filters = this.generateFilters();
       console.log('Filters generated, count:', filters.length);
 
-      if (filters.length === 0) {
-        console.log('No filters, copying video as-is');
+      // If there are no filters and no overlays, just copy
+      if (filters.length === 0 && this.overlays.length === 0) {
+        console.log('No filters or overlays, copying video as-is');
         const args = ['-i', this.videoPath, '-c', 'copy', '-y', this.outputPath];
         return await this.runFFmpeg(args);
       }
 
+      // If there are overlays (PNGs) we need to build a filter_complex chain with extra -i inputs
+      if (this.overlays.length > 0) {
+        // Build args: main input + overlay inputs
+        const args: string[] = ['-i', this.videoPath];
+        for (const ov of this.overlays) {
+          args.push('-i', ov.file);
+        }
+
+        // Build filter_complex parts
+        const fcParts: string[] = [];
+        let prevLabel: string;
+        if (filters.length > 0) {
+          const filterString = filters.join(',');
+          // apply base filters to [0:v] and name it
+          fcParts.push(`[0:v]${filterString}[base0]`);
+          prevLabel = '[base0]';
+        } else {
+          prevLabel = '[0:v]';
+        }
+
+        // chain overlays using additional inputs [1:v], [2:v], ...
+        for (let i = 0; i < this.overlays.length; i++) {
+          const ov = this.overlays[i];
+          const inputIndex = i + 1; // because 0 is main video
+          const outLabel = `[ov${i}]`;
+          // overlay filter: prevLabel [inputIndex:v] overlay=x:y:enable='...'
+          fcParts.push(`${prevLabel}[${inputIndex}:v]overlay=${ov.x}:${ov.y}:enable='${ov.enable}'${outLabel}`);
+          prevLabel = outLabel;
+        }
+
+        const filterComplex = fcParts.join(';');
+        console.log('Using filter_complex:', filterComplex);
+
+        // final mapping: map prevLabel video, and map audio from original input if present
+        const finalLabel = prevLabel;
+        args.push('-filter_complex', filterComplex);
+        args.push('-map', finalLabel);
+        // map audio if present
+        args.push('-map', '0:a?');
+        args.push('-c:v', 'libx264', '-preset', 'slow', '-crf', '18', '-c:a', 'copy', '-y', this.outputPath);
+
+        return await this.runFFmpeg(args);
+      }
+
+      // No overlays -> use simple -vf
       const filterString = filters.join(',');
       console.log('Filter string length:', filterString.length);
       console.log('Filter string:', filterString);
@@ -831,68 +1186,68 @@ export class VideoProcessor {
   }
 
   private async runFFmpeg(args: string[]): Promise<{ success: boolean; result: string }> {
-    console.log('FFmpeg args count:', args.length);
-    const progressPath = path.join(config.outputDir, this.jobId, `${this.jobId}_progress.txt`);
-    console.log('Progress path:', progressPath);
-
-    try {
-      await fs.writeFile(progressPath, '');
-      console.log('Progress file created');
-    } catch (err) {
-      console.error('Failed to create progress file:', err);
-    }
-
     return new Promise((resolve) => {
-      const fullCmd = `ffmpeg ${args.map(a => a.includes(' ') ? `'${a}'` : a).join(' ')} -progress pipe:1`;
-      console.log('Running ffmpeg:', fullCmd);
+      // Ensure job output directory exists and create (touch) the progress file so status polling can read it
+      try {
+        const jobOutDir = path.join(config.outputDir, this.jobId);
+        if (!fsSync.existsSync(jobOutDir)) fsSync.mkdirSync(jobOutDir, { recursive: true });
+        const progressPath = path.join(jobOutDir, `${this.jobId}_progress.txt`);
+        try { fsSync.writeFileSync(progressPath, '', { flag: 'w' }); } catch (e) { /* ignore */ }
 
-      const ffmpeg = spawn('ffmpeg', [...args, '-progress', 'pipe:1']);
-      console.log('Spawned ffmpeg pid=', ffmpeg.pid);
-      let stderr = '';
-      let lastProgressWrite = 0;
+        // Insert -progress <file> before the final output path (last arg)
+        const argsWithProgress = [...args];
+        if (argsWithProgress.length > 0) {
+          const outIndex = argsWithProgress.length - 1;
+          argsWithProgress.splice(outIndex, 0, '-progress', progressPath);
+        }
 
-      ffmpeg.stdout.on('data', (data) => {
-        const str = data.toString();
-        // also print progress lines for debugging
-        console.log('[ffmpeg stdout]', str.trim());
-        const lines = str.split('\n').filter((l: string) => l.trim());
-        const timeMatch = lines.find((l: string) => l.startsWith('out_time_ms='));
-        if (timeMatch) {
-          const now = Date.now();
-          if (now - lastProgressWrite > 200) {
-            fs.writeFile(progressPath, timeMatch).catch(() => {});
-            lastProgressWrite = now;
+        console.log('runFFmpeg: spawning ffmpeg with args:', argsWithProgress.join(' '));
+        const ffmpegProcess = spawn('ffmpeg', argsWithProgress, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+        ffmpegProcess.stderr.on('data', (chunk) => {
+          try {
+            const s = String(chunk);
+            console.log('[ffmpeg stderr]', s);
+            // try to extract out_time_ms/out_time and set into in-memory store for the job
+            const mMs = s.match(/out_time_ms=(\d+)/);
+            if (mMs) {
+              const raw = parseInt(mMs[1]);
+              const secs = raw > 1000000 ? raw / 1000000 : raw / 1000;
+              setJobTime(this.jobId, secs);
+            } else {
+              const mOut = s.match(/out_time=(\d+):(\d+):(\d+\.\d+)/);
+              if (mOut) {
+                const hh = parseInt(mOut[1]);
+                const mm = parseInt(mOut[2]);
+                const ss = parseFloat(mOut[3]);
+                const secs = hh * 3600 + mm * 60 + ss;
+                setJobTime(this.jobId, secs);
+              }
+            }
+          } catch (e) { /* ignore */ }
+        });
+        ffmpegProcess.stdout.on('data', (chunk) => {
+          try {
+            const s = String(chunk);
+            console.log('[ffmpeg stdout]', s);
+          } catch (e) { /* ignore */ }
+        });
+
+        ffmpegProcess.on('close', (code) => {
+          // clear any in-memory timestamp for this job
+          try { clearJobTime(this.jobId); } catch (e) { /* ignore */ }
+          if (code === 0) {
+            resolve({ success: true, result: 'Processing complete' });
+          } else {
+            resolve({ success: false, result: `FFmpeg exited with code ${code}` });
           }
-        }
-      });
-
-      ffmpeg.stderr.on('data', (data) => {
-        const s = data.toString();
-        stderr += s;
-        // realtime stderr log
-        console.log('[ffmpeg stderr]', s.trim());
-      });
-
-      ffmpeg.on('close', (code) => {
-        fs.unlink(progressPath).catch(() => {});
-        console.log('ffmpeg exited with code=', code);
-        if (code === 0) {
-          resolve({ success: true, result: this.outputPath });
-        } else {
-          console.error('FFmpeg failed with code:', code);
-          console.error('FFmpeg stderr (collected):', stderr);
-          resolve({ success: false, result: `FFmpeg error: ${stderr}` });
-        }
-      });
-
-      ffmpeg.on('error', (err) => {
-        fs.unlink(progressPath).catch(() => {});
-        console.error('ffmpeg process error:', err);
-        resolve({ success: false, result: `Process error: ${err.message}` });
-      });
-    });
-  }
-}
-
-
-
+        });
+         return;
+       } catch (err) {
+         console.log('runFFmpeg: failed to spawn ffmpeg:', String(err));
+         resolve({ success: false, result: `FFmpeg spawn error: ${String(err)}` });
+         return;
+       }
+     });
+   }
+ }

@@ -13,8 +13,10 @@ fastify.register(cors, { origin: '*' });
 fastify.register(multipart, { 
   limits: { 
     fileSize: config.maxUploadSize,
-    files: 1,
-    fieldSize: 1000000
+    // allow multiple image files (default UI may send more than one)
+    files: 20,
+    // allow reasonably large JSON field (up to maxUploadSize or 50MB whichever is smaller)
+    fieldSize: Math.min(config.maxUploadSize, 50 * 1024 * 1024)
   },
   attachFieldsToBody: false
 });
