@@ -6,29 +6,44 @@ export const backendApi = {
   async uploadVideo(videoFile, nodes, videoDimensions, canvasDimensions, onProgress) {
     const formData = new FormData();
     
-    // Convert node positions and dimensions to percentages for resolution-independent rendering
+    // Determine the actual displayed canvas size at the time of submit.
+    // This handles cases where the browser was resized after drawing (letterboxing / padding etc.)
+    let actualCanvasWidth = canvasDimensions?.width || videoDimensions.width;
+    let actualCanvasHeight = canvasDimensions?.height || videoDimensions.height;
+    try {
+      const wrapper = document.querySelector('.custom-canvas-wrapper');
+      if (wrapper) {
+        const rect = wrapper.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          actualCanvasWidth = Math.round(rect.width);
+          actualCanvasHeight = Math.round(rect.height);
+        }
+      }
+    } catch (e) {
+      // fallback to provided canvasDimensions
+    }
+
     console.log('=== FRONTEND DEBUG ===');
-    console.log(`Canvas: ${canvasDimensions.width}x${canvasDimensions.height}`);
-    console.log(`Video: ${videoDimensions.width}x${videoDimensions.height}`);
+    console.log(`DOM Canvas size: ${actualCanvasWidth}x${actualCanvasHeight}`);
+    console.log(`Video natural size: ${videoDimensions.width}x${videoDimensions.height}`);
     console.log(`Nodes count: ${nodes.length}`);
-    
+
     const nodesWithPercentages = nodes.map(node => {
-      const posXPercent = (node.position.x / canvasDimensions.width) * 100;
-      const posYPercent = (node.position.y / canvasDimensions.height) * 100;
-      const widthPercent = (node.width / canvasDimensions.width) * 100;
-      const heightPercent = (node.height / canvasDimensions.height) * 100;
-      // Font size as vw (percentage of canvas width) for consistent scaling
-      // This ensures text scales proportionally across different video resolutions
+      const posXPercent = (node.position.x / actualCanvasWidth) * 100;
+      const posYPercent = (node.position.y / actualCanvasHeight) * 100;
+      const widthPercent = (node.width / actualCanvasWidth) * 100;
+      const heightPercent = (node.height / actualCanvasHeight) * 100;
+      // Font size as percent of canvas width so backend can map it to pixels consistently
       const fontSizePercent = node.data.styles?.fontSize
-        ? (node.data.styles.fontSize / canvasDimensions.width) * 100
+        ? (parseFloat(node.data.styles.fontSize) / actualCanvasWidth) * 100
         : undefined;
-      
+
       console.log(`Node ${node.type}: pos=(${node.position.x.toFixed(1)}, ${node.position.y.toFixed(1)}) -> (${posXPercent.toFixed(2)}%, ${posYPercent.toFixed(2)}%)`);
       console.log(`Node ${node.type}: size=(${node.width.toFixed(1)}, ${node.height.toFixed(1)}) -> (${widthPercent.toFixed(2)}%, ${heightPercent.toFixed(2)}%)`);
       if (node.data.styles?.fontSize) {
-        console.log(`Node ${node.type}: fontSize=${node.data.styles.fontSize} -> ${fontSizePercent?.toFixed(2)}%`);
+        console.log(`Node ${node.type}: fontSize=${node.data.styles.fontSize} -> ${fontSizePercent?.toFixed(2)}% (of canvas width)`);
       }
-      
+
       return {
         ...node,
         position: { x: posXPercent, y: posYPercent },
@@ -43,17 +58,17 @@ export const backendApi = {
         }
       };
     });
-    
     const uploadData = {
       nodes: nodesWithPercentages,
       video_width: videoDimensions.width,
       video_height: videoDimensions.height,
       video_duration: videoDimensions.duration || 0,
-      canvas_width: canvasDimensions.width,
-      canvas_height: canvasDimensions.height,
+      // canvas_width/height reflect the DOM canvas size we used to compute percentages
+      canvas_width: actualCanvasWidth,
+      canvas_height: actualCanvasHeight,
       // Pass the actual DOM/video element size (what user sees in the WYSIWYG canvas)
-      video_node_width: canvasDimensions.width,
-      video_node_height: canvasDimensions.height,
+      video_node_width: actualCanvasWidth,
+      video_node_height: actualCanvasHeight,
       use_percentages: true,
     };
     

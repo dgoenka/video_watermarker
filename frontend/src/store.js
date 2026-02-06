@@ -109,27 +109,53 @@ const createStore = () => create((set, get) => ({
             // Scale existing nodes
             const scaleX = dimensions.width / prevCanvas.width;
             const scaleY = dimensions.height / prevCanvas.height;
-            const nodes = get().nodes.map(node => ({
-                ...node,
-                position: { x: node.position.x * scaleX, y: node.position.y * scaleY },
-                width: node.width * scaleX,
-                height: node.height * scaleY,
-                data: {
-                    ...node.data,
-                    styles: node.data.styles && node.data.styles.fontSize ? {
-                        ...node.data.styles,
-                        fontSize: Math.round(node.data.styles.fontSize * Math.min(scaleX, scaleY))
-                    } : node.data.styles,
-                    startPoint: node.data.startPoint ? {
-                        x: node.data.startPoint.x * scaleX,
-                        y: node.data.startPoint.y * scaleY
-                    } : node.data.startPoint,
-                    endPoint: node.data.endPoint ? {
-                        x: node.data.endPoint.x * scaleX,
-                        y: node.data.endPoint.y * scaleY
-                    } : node.data.endPoint
+            const nodes = get().nodes.map(node => {
+                // scale positions and dimensions
+                const newPos = { x: node.position.x * scaleX, y: node.position.y * scaleY };
+                const newW = node.width * scaleX;
+                const newH = node.height * scaleY;
+
+                // handle font size which may be numeric px or a percentage string
+                let newStyles = node.data.styles;
+                if (node.data && node.data.styles && node.data.styles.fontSize !== undefined && node.data.styles.fontSize !== null) {
+                  const fsRaw = node.data.styles.fontSize;
+                  let fontPx = NaN;
+                  if (typeof fsRaw === 'string' && fsRaw.trim().endsWith('%')) {
+                    // convert percent (of previous canvas width) to px
+                    const pct = parseFloat(fsRaw);
+                    if (!isNaN(pct) && prevCanvas.width > 0) {
+                      fontPx = (pct / 100) * prevCanvas.width;
+                    }
+                  } else {
+                    const parsed = parseFloat(fsRaw);
+                    if (!isNaN(parsed)) fontPx = parsed;
+                  }
+
+                  if (!isNaN(fontPx)) {
+                    const scaledFontPx = Math.max(1, Math.round(fontPx * Math.min(scaleX, scaleY)));
+                    newStyles = { ...node.data.styles, fontSize: scaledFontPx };
+                  }
                 }
-            }));
+
+                return {
+                    ...node,
+                    position: newPos,
+                    width: newW,
+                    height: newH,
+                    data: {
+                        ...node.data,
+                        styles: newStyles,
+                        startPoint: node.data.startPoint ? {
+                            x: node.data.startPoint.x * scaleX,
+                            y: node.data.startPoint.y * scaleY
+                        } : node.data.startPoint,
+                        endPoint: node.data.endPoint ? {
+                            x: node.data.endPoint.x * scaleX,
+                            y: node.data.endPoint.y * scaleY
+                        } : node.data.endPoint
+                    }
+                };
+            });
             set({ nodes, canvasDimensions: dimensions });
         } else {
             set({ canvasDimensions: dimensions });
@@ -302,10 +328,49 @@ export const StoreProvider = ({ children }) => {
   );
 };
 
-export const useStore = (selector) => {
+export const useStore = (selector, equalityFn) => {
   const store = useContext(StoreContext);
   if (!store) {
-    throw new Error('useStore must be used within a StoreProvider');
+    console.error('useStore called outside StoreProvider - returning safe fallback. Wrap your app in <StoreProvider> to enable full functionality.');
+
+    const dummyState = {
+      nodes: [],
+      nodeIDs: {},
+      videoDimensions: { width: 0, height: 0 },
+      canvasDimensions: { width: 0, height: 0 },
+      currentTime: 0,
+      drawingMode: null,
+      setDrawingMode: () => {},
+      setVideoDimensions: () => {},
+      setCanvasDimensions: () => {},
+      setCurrentTime: () => {},
+      getNodeID: () => 'missing-0',
+      addNode: () => {},
+      removeNode: () => {},
+      onNodesChange: () => {},
+      updateNodeField: () => {},
+      updateNodeStyles: () => {},
+      toggleTimestamp: () => {},
+      toggleSelectedTimestamps: () => {},
+      unselectAll: () => {},
+      moveNodeUp: () => {},
+      moveNodeDown: () => {},
+      isDrawing: false,
+      drawingNodeId: null,
+      drawingStartPos: null,
+      setIsDrawing: () => {},
+      setDrawingNodeId: () => {},
+      setDrawingStartPos: () => {},
+      selectNode: () => {},
+    };
+
+    try {
+      if (typeof selector === 'function') return selector(dummyState);
+      return dummyState;
+    } catch (e) {
+      return undefined;
+    }
   }
-  return store(selector);
+
+  return store(selector, equalityFn);
 };

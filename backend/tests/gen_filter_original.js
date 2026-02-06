@@ -1,4 +1,4 @@
-const { VideoProcessor } = require('./dist/processor');
+const { VideoProcessor } = require('../dist/processor');
 const fs = require('fs');
 
 const sample = {

@@ -7,7 +7,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "db:migrate": "tsx src/db/migrate.ts"
+    "db:migrate": "tsx src/db/migrate.ts",
+    "render-overlay": "node tests/overlay_renderer.js"
   },
   "dependencies": {
     "@fastify/cors": "^8.4.2",
@@ -25,5 +26,8 @@
     "@types/uuid": "^9.0.7",
     "tsx": "^4.7.0",
     "typescript": "^5.3.3"
+  },
+  "optionalDependencies": {
+    "canvas": "^2.11.0"
   }
 }

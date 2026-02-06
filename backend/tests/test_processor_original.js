@@ -1,4 +1,4 @@
-const { VideoProcessor } = require('./dist/processor');
+const { VideoProcessor } = require('../dist/processor');
 
 async function run() {
   const sampleData = {
